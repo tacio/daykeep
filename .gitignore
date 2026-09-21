@@ -1,0 +1,8 @@
+# build outputs (make)
+timekeep
+timekeep-c
+*.o
+
+# verification environment
+verify/.venv/
+__pycache__/
