@@ -80,9 +80,10 @@ make verify         # runs verify/prove.py
 ```
 
 `make verify` runs inside a user systemd scope capped at 12 GB of RAM with
-swap disabled. Symbolic execution can use a lot of memory, and without the
-cap a runaway run gets OOM-killed along with the terminal it runs in. Set a
-different cap with `make verify VERIFY_MEM=8G`.
+swap disabled. A normal run peaks at about 450 MB. The cap is there so that a
+runaway symbolic execution (for example, after a change to the program) gets
+OOM-killed on its own instead of taking the terminal with it. Set a different
+cap with `make verify VERIFY_MEM=8G`.
 
 See [`verify/README.md`](verify/README.md) for what is proved and what is not.
 

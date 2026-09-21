@@ -17,6 +17,7 @@ See verify/README.md for the trusted base and the exact scope of each claim.
 import subprocess
 import sys
 import os
+import tempfile
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -36,7 +37,6 @@ for n in ("angr", "cle", "pyvex", "claripy", "angr.engines"):
 
 BASE = 0x400000
 BIN = os.path.join(ROOT, "timekeep")
-SUM_ACTIVE_CAP = 256        # max live paths in the sum-mode whole-program check
 
 results = []
 def record(name, ok, detail=""):
@@ -51,9 +51,10 @@ def record(name, ok, detail=""):
 # ------------------------------------------------------------------ symbols
 def load_symbols():
     """vaddr of each .text symbol = BASE + its offset in the assembled object."""
-    subprocess.run(["as", "-o", "/tmp/tk_verify.o", os.path.join(ROOT, "timekeep.s")],
-                   check=True)
-    out = subprocess.check_output(["objdump", "-t", "/tmp/tk_verify.o"]).decode()
+    with tempfile.TemporaryDirectory() as tmp:       # private: runs may overlap
+        obj = os.path.join(tmp, "tk_verify.o")
+        subprocess.run(["as", "-o", obj, os.path.join(ROOT, "timekeep.s")], check=True)
+        out = subprocess.check_output(["objdump", "-t", obj]).decode()
     syms = {}
     for ln in out.splitlines():
         parts = ln.split()
@@ -138,6 +139,68 @@ def read_out(state, start, end_reg="rdi"):
     if n <= 0 or n > OUTLEN:
         return None
     return state.solver.eval_one(state.memory.load(start, n)).to_bytes(n, "big")
+
+
+def watch_mem(st, write_ok, read_ok=None):
+    """Record every write (and read, if read_ok is given) that can fall outside
+    the allowed regions, a list of (lo, hi) pairs of ints or claripy exprs.
+    Unlike run_leaf's guard there is no implicit stack window: the caller lists
+    the exact stack slots.  Returns the (shared) violation list."""
+    viol = []
+    def check(s, kind):
+        if kind == "w":
+            addr, length, regions = (s.inspect.mem_write_address,
+                                     s.inspect.mem_write_length, write_ok)
+        else:
+            addr, length, regions = (s.inspect.mem_read_address,
+                                     s.inspect.mem_read_length, read_ok)
+        if length is None:
+            length = 1
+        size = length if isinstance(length, int) else s.solver.eval_one(length)
+        a = addr if not isinstance(addr, int) else claripy.BVV(addr, 64)
+        inside = claripy.Or(claripy.false(), *[
+            claripy.And(claripy.UGE(a, lo), claripy.ULE(a + size, hi))
+            for lo, hi in regions])
+        if s.solver.satisfiable(extra_constraints=[claripy.Not(inside)]):
+            viol.append((kind, hex(s.addr), size))
+    st.inspect.b("mem_write", when=angr.BP_BEFORE, action=lambda s: check(s, "w"))
+    if read_ok is not None:
+        st.inspect.b("mem_read", when=angr.BP_BEFORE, action=lambda s: check(s, "r"))
+    return viol
+
+
+def watch_syscalls(st):
+    """Log (rax, rdi, rsi, rdx) of every syscall into the state's globals."""
+    def on_sys(s):
+        s.globals["sys"] = s.globals.get("sys", ()) + (
+            (s.regs.rax, s.regs.rdi, s.regs.rsi, s.regs.rdx),)
+    st.inspect.b("syscall", when=angr.BP_BEFORE, action=on_sys)
+
+
+def explore_capped(st, stops, max_active=64, max_steps=400):
+    """Step every path until it reaches an address in `stops` (moved to
+    'found') or ends (left in 'deadended').  Never prunes: if the live path
+    count or the step count exceeds its cap, or a path errors, returns a reason
+    string so the obligation fails instead of silently losing paths."""
+    simgr = proj.factory.simulation_manager(st)
+    stops = set(stops)
+    for _ in range(max_steps):
+        if not simgr.active:
+            break
+        simgr.step(extra_stop_points=stops)
+        simgr.move("active", "found", lambda s: s.addr in stops)
+        if len(simgr.active) > max_active:
+            return simgr, f"path cap {max_active} exceeded"
+    if simgr.active:
+        return simgr, f"step cap {max_steps} exceeded"
+    if simgr.errored:
+        return simgr, f"path errored: {simgr.errored[0].error}"
+    return simgr, None
+
+
+def must(state, cond):
+    """True iff `cond` holds on every model of the state's path constraints."""
+    return not state.solver.satisfiable(extra_constraints=[claripy.Not(cond)])
 
 
 # ============================================================ Z3 THEOREMS
@@ -351,14 +414,26 @@ def feedb_step_cl(weights, cur, line, indig, total, c):
 class SumEmitModel(angr.SimProcedure):
     """Model of sum_emit for the feedb transition proof: total += canonical
     (line mod 1440), no output.  The real sum_emit is verified against exactly
-    this update in prove_sum_emit, so using the model here is not circular."""
+    this update in prove_sum_emit, so using the model here is not circular.
+    Registers the real routine may clobber become fresh symbols; the ones it
+    keeps are exactly those prove_sum_emit_frame shows it preserves."""
     def run(self):
-        line = self.state.regs.r10[31:0]
-        total = self.state.regs.r12[31:0]
+        s = self.state
+        s.globals["sum_emit_rsp"] = s.globals.get("sum_emit_rsp", ()) + (s.regs.rsp,)
+        line = s.regs.r10[31:0]
+        total = s.regs.r12[31:0]
         d = line.SMod(claripy.BVV(1440, 32))
         d = claripy.If(claripy.SLT(d, 0), d + 1440, d)
-        self.state.regs.r12 = claripy.ZeroExt(32, total + d)
+        s.regs.r12 = claripy.ZeroExt(32, total + d)
+        for r in SUM_EMIT_CLOBBERS:
+            setattr(s.regs, r, claripy.BVS(f"clob_{r}", 64))
         return
+
+
+# registers sum_emit (with emitdur/emitdec and the write syscall) may change,
+# besides r12; prove_sum_emit_frame shows every other one is preserved.
+SUM_EMIT_CLOBBERS = ("rax", "rcx", "rdx", "rdi", "rsi", "r8", "r11")
+SUM_EMIT_KEEPS = ("rbx", "rbp", "r9", "r10", "r13", "r14", "r15")
 
 
 def prove_sum_emit():
@@ -380,7 +455,8 @@ def prove_sum_emit():
         if s.solver.satisfiable(extra_constraints=[s.regs.r12[31:0] != exp]):
             ok = False; detail = "total update disagrees with spec"; break
     record("sum_emit adds canonical (line mod 1440) to the total", ok, detail)
-    proj.unhook(SYM["emitdur"])
+    for h in ("emitdur", "writestr"):
+        proj.unhook(SYM[h])
 
 
 def prove_feedb():
@@ -397,13 +473,30 @@ def prove_feedb():
     st.regs.r11 = claripy.ZeroExt(56, indig)
     st.regs.r12 = claripy.ZeroExt(32, total)
     st.regs.al = c
-    # r9 (arg pointer) is preserved by feedb; give it a harmless value
-    st.regs.r9 = INBUF
-    found, viol = run_leaf(st, [(OUTBUF, OUTBUF + OUTLEN), (INBUF, INBUF + 16)])
-    ok = bool(found) and not viol
-    detail = f"paths={len(found)} viol={viol}"
+    # the loop driver's registers must come back untouched
+    keep = {r: claripy.BVS(r, 64) for r in ("r9", "r13", "r14", "r15")}
+    for r, v in keep.items():
+        setattr(st.regs, r, v)
+    # rsp at entry is STACK-8 (the return address).  feedb's only own write
+    # is its call to sum_emit, pushed at STACK-16; sum_emit's writes are
+    # bounded relative to its entry rsp by prove_sum_emit_frame.
+    viol = watch_mem(st, [(STACK - 16, STACK - 8)])
+    simgr, why = explore_capped(st, [RET])
+    found = simgr.found
+    ok = bool(found) and not viol and why is None and not simgr.deadended
+    detail = f"paths={len(found)} viol={viol} cap={why}"
     ew, ecur, eline, eindig, etot = feedb_step_cl(weights, cur, line, indig, total, c)
     for s in found:
+        # ret popped the sentinel, so rsp is back to STACK; driver regs kept;
+        # sum_emit, when called, is entered at rsp STACK-16
+        framed = claripy.And(s.regs.rsp == STACK, *[
+            getattr(s.regs, r) == v for r, v in keep.items()])
+        calls = s.globals.get("sum_emit_rsp", ())
+        if not must(s, framed) or len(calls) > 1 or not all(
+                must(s, r == STACK - 16) for r in calls):
+            ok = False
+            detail = "feedb disturbs rsp/r9/r13/r14/r15 or calls sum_emit off-frame"
+            break
         got_w = s.regs.ebx
         got_cur = s.regs.ebp
         got_line = s.regs.r10[31:0]
@@ -426,15 +519,19 @@ def prove_feedb():
             detail = (f"register transition disagrees with spec in {diff}; "
                       f"e.g. input " + ", ".join(f"{k}={v:#x}" for k, v in m.items()))
             break
-    record("feedb parser step matches spec for all states/bytes (induction base)",
-           ok, detail)
+    record("feedb parser step matches spec for all states/bytes; "
+           "keeps rsp/r9/r13-r15", ok, detail)
     for h in ("writestr", "sum_emit"):          # restore for the whole-program run
         proj.unhook(SYM[h])
 
 
 class WritestrNoop(angr.SimProcedure):
+    """writestr without the syscall: returns the byte count and, like the
+    syscall instruction, clobbers rcx and r11."""
     def run(self, *a):
         self.state.regs.rax = self.state.regs.rdx
+        self.state.regs.rcx = claripy.BVS("sys_rcx", 64)
+        self.state.regs.r11 = claripy.BVS("sys_r11", 64)
         return
 
 
@@ -471,58 +568,210 @@ def prove_terminal():
            f"syscalls={sc0}")
 
 
-# ------------------------------------------------- sum-mode whole-program safety
-def prove_sum_safety():
-    # a symbolic single argument; check no write ever targets the code image and
-    # only write/exit syscalls occur, across every explored path.
-    argbytes = [claripy.BVS(f"a{i}", 8) for i in range(8)]
-    arg = claripy.Concat(*argbytes)
-    st = proj.factory.entry_state(
-        args=["timekeep", arg],
-        add_options={angr.options.ZERO_FILL_UNCONSTRAINED_MEMORY,
-                     angr.options.ZERO_FILL_UNCONSTRAINED_REGISTERS},
-    )
-    for a in argbytes:                          # printable, non-NUL
-        st.solver.add(claripy.And(claripy.UGE(a, 0x20), claripy.ULE(a, 0x7e)))
-    bad = {"img_write": False, "syscalls": set()}
-    imglo, imghi = BASE, BASE + os.path.getsize(BIN)
-    def on_w(s):
-        addr = s.inspect.attrs.mem_write_address
-        if s.solver.satisfiable(extra_constraints=[claripy.And(
-                claripy.UGE(addr, imglo), claripy.ULT(addr, imghi))]):
-            bad["img_write"] = True
-    def on_sys(s):
-        try:
-            bad["syscalls"].add(s.solver.eval(s.regs.rax) & 0xFFFFFFFF)
-        except Exception:
-            pass
-    st.inspect.b("mem_write", when=angr.BP_BEFORE, action=on_w)
-    st.inspect.b("syscall", when=angr.BP_BEFORE, action=on_sys)
-    # The parser forks per argument byte, so the path count explodes.  The
-    # breakpoints already record everything the check needs, so finished paths
-    # are dropped as they appear and the active set is capped; paths beyond the
-    # cap are counted and reported rather than held in memory.
-    simgr = proj.factory.simulation_manager(st)
-    done = pruned = 0
-    for _ in range(4000):
-        if not simgr.active:
+# ------------------------------------------------- sum-mode loop, by induction
+# run_sum's loop has two cut points, sum_arg and sum_byte.  With A the initial
+# rsp (argc slot) and S = A - 0x100 the frame, the invariant Inv at both is:
+#   rsp == S, r15 == A+8 (argv), r14 == argc, 1 <= r13 <= r14 (< r14 at
+#   sum_byte), parser regs == spec Parser state, nothing at/above S+0x100 written.
+# prove_sum_prologue shows _start establishes Inv; prove_sum_arg and
+# prove_sum_byte show each cut-point-to-cut-point step keeps it.  feedb is
+# replaced by the spec step (FeedbModel), which prove_feedb justifies.
+ARGC_SLOT = STACK             # A: concrete; the loop never compares rsp with an
+FRAME = ARGC_SLOT - 0x100     # absolute address, so the choice is immaterial
+ARGV = ARGC_SLOT + 8
+
+
+class FeedbModel(angr.SimProcedure):
+    """feedb as one spec parser step on (ebx, ebp, r10d, r11b, r12d) and the
+    byte in al.  prove_feedb shows the real routine computes the same and keeps
+    rsp/r9/r13/r14/r15; everything else it may touch becomes a fresh symbol."""
+    def run(self):
+        s = self.state
+        s.globals["feedb"] = s.globals.get("feedb", ()) + ((s.regs.rsp, s.regs.al),)
+        nw, ncur, nline, nindig, ntot = feedb_step_cl(
+            s.regs.ebx, s.regs.ebp, s.regs.r10[31:0], s.regs.r11[7:0],
+            s.regs.r12[31:0], s.regs.al)
+        hi = lambda r, n: claripy.BVS(f"hi_{r}", n)
+        s.regs.rbx = claripy.Concat(hi("rbx", 32), nw)
+        s.regs.rbp = claripy.Concat(hi("rbp", 32), ncur)
+        s.regs.r10 = claripy.Concat(hi("r10", 32), nline)
+        s.regs.r11 = claripy.Concat(hi("r11", 56), nindig)
+        s.regs.r12 = claripy.Concat(hi("r12", 32), ntot)
+        for r in ("rax", "rcx", "rdx", "rdi", "rsi", "r8"):
+            setattr(s.regs, r, claripy.BVS(f"clob_{r}", 64))
+        return
+
+
+def parser_regs(s):
+    return (s.regs.ebx, s.regs.ebp, s.regs.r10[31:0], s.regs.r11[7:0],
+            s.regs.r12[31:0])
+
+
+def cut_state(addr, at_byte):
+    """A symbolic state at a cut point satisfying Inv."""
+    st = proj.factory.blank_state(
+        addr=addr,
+        add_options={angr.options.SYMBOL_FILL_UNCONSTRAINED_REGISTERS,
+                     angr.options.SYMBOL_FILL_UNCONSTRAINED_MEMORY})
+    v = {"weights": claripy.BVS("weights", 32), "cur": claripy.BVS("cur", 32),
+         "line": claripy.BVS("line", 32), "indig": claripy.BVS("indig", 8),
+         "total": claripy.BVS("total", 32),
+         "r13": claripy.BVS("r13", 64), "r14": claripy.BVS("r14", 64)}
+    st.regs.rsp = FRAME
+    st.regs.r15 = ARGV
+    st.regs.r13 = v["r13"]; st.regs.r14 = v["r14"]
+    st.regs.ebx = v["weights"]; st.regs.ebp = v["cur"]
+    st.regs.r10 = claripy.ZeroExt(32, v["line"])
+    st.regs.r11 = claripy.ZeroExt(56, v["indig"])
+    st.regs.r12 = claripy.ZeroExt(32, v["total"])
+    # argc is a positive int; r13 indexes a real argument (or argc itself)
+    st.solver.add(claripy.ULE(1, v["r13"]), claripy.ULT(v["r14"], 1 << 31))
+    st.solver.add(claripy.ULT(v["r13"], v["r14"]) if at_byte
+                  else claripy.ULE(v["r13"], v["r14"]))
+    watch_syscalls(st)
+    return st, v
+
+
+def prove_sum_emit_frame():
+    # A: real sum_emit/emitdur/emitdec/write for every 32-bit line and total.
+    # Entered at rsp X, it may only write [X-0x80, X+0x50): the digit pushes
+    # below and the output line at X+0x40.  In the loop X = S-16, so nothing
+    # at or above S+0x40 < A (argc/argv/strings) is ever written.
+    st = leaf_state(SYM["sum_emit"])
+    X = STACK - 8
+    st.regs.r10 = claripy.ZeroExt(32, claripy.BVS("line", 32))
+    st.regs.r12 = claripy.ZeroExt(32, claripy.BVS("total", 32))
+    keep = {r: claripy.BVS(r, 64) for r in SUM_EMIT_KEEPS if r != "r10"}
+    keep["r10"] = st.regs.r10
+    for r, v in keep.items():
+        setattr(st.regs, r, v)
+    buf = X + 0x40
+    st.memory.store(buf, claripy.BVS("junk", 16 * 8))   # "not written yet"
+    region = [(X - 0x80, X + 0x50)]
+    viol = watch_mem(st, region, region)
+    watch_syscalls(st)
+    simgr, why = explore_capped(st, [RET])
+    ok = bool(simgr.found) and not viol and why is None and not simgr.deadended
+    detail = f"paths={len(simgr.found)} viol={viol} cap={why}"
+    for s in simgr.found:
+        calls = s.globals.get("sys", ())
+        if len(calls) != 1:
+            ok = False; detail = f"{len(calls)} syscalls on a path"; break
+        rax, rdi, rsi, rdx = calls[0]
+        if not (must(s, claripy.And(rax == 1, rdi == 1, rsi == buf,
+                                    claripy.ULE(1, rdx), claripy.ULE(rdx, 16)))):
+            ok = False; detail = "syscall is not write(1, buf, 1..16)"; break
+        n = s.solver.eval_one(rdx)
+        if any("junk" in str(v) for i in range(n)
+               for v in s.memory.load(buf + i, 1).variables):
+            ok = False; detail = "write covers bytes never filled"; break
+        if not must(s, claripy.And(s.regs.rsp == STACK, *[
+                getattr(s.regs, r) == v for r, v in keep.items()])):
+            ok = False; detail = "sum_emit changes rsp or a kept register"; break
+    record("sum_emit: write(1, line, 1..16) from its own frame; writes stay "
+           "in [rsp-0x80, rsp+0x50); keeps loop regs", ok, detail)
+
+
+def prove_sum_prologue():
+    # C: from _start with any argc >= 2, reach sum_arg with Inv and the spec's
+    # initial parser state, writing nothing.
+    st = proj.factory.blank_state(
+        addr=SYM["_start"],
+        add_options={angr.options.SYMBOL_FILL_UNCONSTRAINED_REGISTERS,
+                     angr.options.SYMBOL_FILL_UNCONSTRAINED_MEMORY})
+    argc = claripy.BVS("argc", 64)
+    st.regs.rsp = ARGC_SLOT
+    st.memory.store(ARGC_SLOT, argc, endness="Iend_LE")
+    st.solver.add(claripy.UGE(argc, 2), claripy.ULT(argc, 1 << 31))
+    viol = watch_mem(st, [])
+    watch_syscalls(st)
+    simgr, why = explore_capped(st, [SYM["sum_arg"]])
+    ok = len(simgr.found) == 1 and not simgr.deadended and not viol and why is None
+    detail = f"paths={len(simgr.found)} ended={len(simgr.deadended)} viol={viol} cap={why}"
+    for s in simgr.found:
+        w, cur, line, indig, tot = parser_regs(s)
+        inv = claripy.And(
+            s.regs.rsp == FRAME, s.regs.r15 == ARGV, s.regs.r14 == argc,
+            s.regs.r13 == 1, w == WEIGHTS, cur == 0, line == 0, indig == 0,
+            tot == 0)
+        if not must(s, inv) or s.globals.get("sys"):
+            ok = False; detail = "sum_arg reached without Inv / initial state"
+    record("sum mode prologue: reaches sum_arg with Inv and the spec's "
+           "initial parser state", ok, detail)
+
+
+def prove_sum_arg():
+    # D: one step from sum_arg.  Either r13 == argc and the program exits(0)
+    # with no other syscall, or it loads argv[r13] (and only that) into r9 and
+    # reaches sum_byte with everything else unchanged.
+    proj.hook(SYM["feedb"], FeedbModel(), replace=True)
+    st, v = cut_state(SYM["sum_arg"], at_byte=False)
+    slot = ARGV + 8 * v["r13"]
+    viol = watch_mem(st, [], [(ARGV, ARGV + 8 * v["r14"])])
+    def on_read(s):
+        s.globals["argp"] = s.inspect.mem_read_expr
+    st.inspect.b("mem_read", when=angr.BP_AFTER, action=on_read)
+    before = parser_regs(st)
+    simgr, why = explore_capped(st, [SYM["sum_byte"]])
+    ok = bool(simgr.found) and len(simgr.deadended) == 1 and not viol and why is None
+    detail = (f"to_byte={len(simgr.found)} exits={len(simgr.deadended)} "
+              f"viol={viol} cap={why}")
+    for s in simgr.found:
+        same = claripy.And(
+            claripy.ULT(v["r13"], v["r14"]), s.regs.rsp == FRAME,
+            s.regs.r15 == ARGV, s.regs.r13 == v["r13"], s.regs.r14 == v["r14"],
+            s.regs.r9 == s.globals.get("argp", claripy.BVV(0, 64)),
+            *[a == b for a, b in zip(parser_regs(s), before)])
+        if not must(s, same) or s.globals.get("sys") or s.globals.get("feedb"):
+            ok = False; detail = "sum_arg -> sum_byte breaks Inv or r9 != argv[r13]"
+    for s in simgr.deadended:
+        calls = s.globals.get("sys", ())
+        if (len(calls) != 1 or not must(s, claripy.And(
+                calls[0][0] == 60, calls[0][1] == 0, v["r13"] == v["r14"]))):
+            ok = False; detail = "exit path is not a lone exit(0) at r13 == argc"
+    record("sum_arg step: exit(0) once all args are read, else r9 = argv[r13] "
+           "(the only read); keeps Inv", ok, detail)
+    proj.unhook(SYM["feedb"])
+
+
+def prove_sum_byte():
+    # E: one step from sum_byte.  Reads the byte at r9 (only that); a nonzero
+    # byte c is fed as c and r9 advances; a NUL is fed as ' ' and r13 advances.
+    # The only writes are the call's return slot below S; no syscalls.
+    proj.hook(SYM["feedb"], FeedbModel(), replace=True)
+    st, v = cut_state(SYM["sum_byte"], at_byte=True)
+    c = claripy.BVS("c", 8)
+    st.regs.r9 = INBUF          # any address works: the loop only reads it
+    st.memory.store(INBUF, c)
+    viol = watch_mem(st, [(FRAME - 8, FRAME)],
+                     [(INBUF, INBUF + 1), (FRAME - 8, FRAME)])
+    before = parser_regs(st)
+    simgr, why = explore_capped(st, [SYM["sum_byte"], SYM["sum_arg"]])
+    ok = len(simgr.found) == 2 and not simgr.deadended and not viol and why is None
+    detail = f"paths={len(simgr.found)} viol={viol} cap={why}"
+    for s in simgr.found:
+        calls = s.globals.get("feedb", ())
+        if len(calls) != 1 or s.globals.get("sys"):
+            ok = False; detail = "not exactly one feedb call, or a syscall"; break
+        rsp_at, fed = calls[0]
+        nul = s.addr == SYM["sum_arg"]
+        byte = claripy.BVV(0x20, 8) if nul else c
+        exp = feedb_step_cl(*before[:4], before[4], byte)
+        got = parser_regs(s)
+        cond = [rsp_at == FRAME - 8, fed == byte, s.regs.rsp == FRAME,
+                s.regs.r15 == ARGV, s.regs.r14 == v["r14"],
+                *[a == b for a, b in zip(got, (exp[0], exp[1], exp[2], exp[3], exp[4]))]]
+        if nul:
+            cond += [c == 0, s.regs.r13 == v["r13"] + 1]
+        else:
+            cond += [c != 0, s.regs.r13 == v["r13"], s.regs.r9 == INBUF + 1]
+        if not must(s, claripy.And(*cond)):
+            ok = False
+            detail = f"{'NUL' if nul else 'byte'} path breaks Inv or feeds the wrong byte"
             break
-        simgr.step()
-        done += len(simgr.deadended) + len(simgr.errored)
-        simgr.drop(stash="deadended")
-        simgr.drop(stash="errored")
-        simgr.drop(stash="unsat")
-        if len(simgr.active) > SUM_ACTIVE_CAP:
-            pruned += len(simgr.active) - SUM_ACTIVE_CAP
-            simgr.split(from_stash="active", to_stash="pruned",
-                        limit=SUM_ACTIVE_CAP)
-            simgr.drop(stash="pruned")
-    allowed = bad["syscalls"] <= {1, 60}        # write, exit_group/exit
-    ok = (not bad["img_write"]) and allowed and (60 in bad["syscalls"])
-    record("sum mode: no writes into the code image; only write/exit syscalls",
-           ok, f"img_write={bad['img_write']} syscalls={sorted(bad['syscalls'])} "
-               f"paths_finished={done} paths_pruned={pruned} "
-               f"left_active={len(simgr.active)}")
+    record("sum_byte step: feeds the byte (NUL as ' ', then next arg) to the "
+           "spec step; keeps Inv", ok, detail)
+    proj.unhook(SYM["feedb"])
 
 
 if __name__ == "__main__":
@@ -536,11 +785,16 @@ if __name__ == "__main__":
     prove_emitdur()
     prove_parse_hm()
     prove_sum_emit()
+    prove_sum_emit_frame()
     prove_feedb()
 
     print("\n-- angr whole-program checks --")
     prove_terminal()
-    prove_sum_safety()
+
+    print("\n-- sum-mode loop, by induction over cut points --")
+    prove_sum_prologue()
+    prove_sum_arg()
+    prove_sum_byte()
 
     print("\n" + "=" * 40)
     n_ok = sum(1 for _, ok, _ in results if ok)

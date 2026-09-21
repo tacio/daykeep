@@ -181,10 +181,12 @@ run_sum:
 	xor	r10d, r10d
 	xor	r11d, r11d
 	mov	r13d, 1
+sum_arg:                                # public cut-point label for the loop proof
 .Larg:
 	cmp	r13, r14
 	jge	.Lsum_done
 	mov	r9, [r15 + r13*8]
+sum_byte:                               # public cut-point label for the loop proof
 .Lbyte:
 	movzx	eax, byte ptr [r9]
 	test	al, al
