@@ -16,7 +16,8 @@
 
 /* daykeep: a decimal-time tracker.
  *
- * Times are day numbers plus fractions of a day since 1987-07-28 00:00 UTC;
+ * Times are day numbers plus fractions of a day since day 0, 2000-01-01
+ * 00:00 UTC unless --epoch, DAYKEEP_EPOCH or the config file says otherwise;
  * see dktime.h.  This file is the command line: summing ranges, --now and
  * --convert.  The tracker is in track.c.
  */
@@ -57,8 +58,9 @@ static void usage(void)
 	       "  or:  %s [OPTION]... --convert VALUE...\n"
 	       "  or:  %s [OPTION]... --track\n", PROGRAM, PROGRAM, PROGRAM, PROGRAM);
 	fputs("Work with decimal time: day numbers and fractions of a day counted\n"
-	      "from day 0 = 1987-07-28 00:00 UTC.  One step of the 4th decimal\n"
-	      "place is 8.64 seconds; 90 minutes is .0625.\n"
+	      "from day 0, which is 2000-01-01 00:00 UTC unless --epoch says\n"
+	      "otherwise.  One step of the 4th decimal place is 8.64 seconds;\n"
+	      "90 minutes is .0625.\n"
 	      "\n"
 	      "Sum time ranges, written START - END, and print the running total\n"
 	      "after each one.  Ranges come from the operands, else from each FILE,\n"
@@ -79,14 +81,17 @@ static void usage(void)
 	      "  -a, --append=LOG   with --track, keep the entries in LOG, one range\n"
 	      "                       per line; an open entry at its end is resumed\n"
 	      "  -u, --utc          read and print wall-clock times in UTC\n"
+	      "      --epoch=DATE   count days from DATE, an ISO date and time as\n"
+	      "                       --convert reads it, but in UTC unless it has\n"
+	      "                       an offset\n"
 	      "      --help         display this help and exit\n"
 	      "      --version      output version information and exit\n"
 	      "\n"
 	      "A stamp may leave out digits.  Missing right digits are zeros\n"
 	      "(.5 is .5000).  Missing left digits pick the most recent day, up to\n"
 	      "today, whose number ends in the digits given; a leading '+' picks the\n"
-	      "first such day from today on.  If today is 14301, then 9 is 14299,\n"
-	      "+9 is 14309 and .5 is 14301.5000.  HH:MM means that time today.\n"
+	      "first such day from today on.  If today is 9761, then 9 is 9759,\n"
+	      "+9 is 9769 and .5 is 9761.5000.  HH:MM means that time today.\n"
 	      "\n"
 	      "An END that leaves out digits is completed from START instead: it is\n"
 	      "the first matching time not before START, so .9 - .1 lasts .2000 and\n"
@@ -97,6 +102,10 @@ static void usage(void)
 	      "form above and is completed like an END, from the stamp before it.\n"
 	      "The log is rewritten after every change, so it is always current,\n"
 	      "and -f LOG reads it back.\n"
+	      "\n"
+	      "Day 0 comes from --epoch, else from the DAYKEEP_EPOCH environment\n"
+	      "variable, else from an 'epoch = DATE' line in\n"
+	      "$XDG_CONFIG_HOME/daykeep/config (~/.config/daykeep/config).\n"
 	      "\n"
 	      "Exit status is 0 if all went well, 1 if some input was invalid, and\n"
 	      "2 for usage or I/O errors.\n", stdout);
@@ -133,6 +142,113 @@ dk_secs clock_now(void)
 	fprintf(stderr, "%s: invalid DAYKEEP_NOW '%s'\n", PROGRAM, env);
 	exit(EXIT_TROUBLE);
 }
+
+/* --- the epoch ---------------------------------------------------------- */
+
+#define BLANKS " \t\r\n\f\v"
+
+static char *trim(char *s)
+{
+	char *e;
+
+	s += strspn(s, BLANKS);
+	for (e = s + strlen(s); e > s && strchr(BLANKS, e[-1]); e--)
+		;
+	*e = '\0';
+	return s;
+}
+
+static void config_error(const char *name, long line, const char *what, const char *v)
+{
+	fprintf(stderr, "%s: %s:%ld: %s '%s'\n", PROGRAM, name, line, what, v);
+	exit(EXIT_TROUBLE);
+}
+
+/* $XDG_CONFIG_HOME/daykeep/config, or ~/.config/daykeep/config; NULL if
+ * neither variable is usable.  The result is malloc'd. */
+static char *config_path(void)
+{
+	const char *dir = getenv("XDG_CONFIG_HOME"), *sub = "daykeep/config";
+	char *path;
+
+	if (!dir || dir[0] != '/') {
+		dir = getenv("HOME");
+		sub = ".config/daykeep/config";
+		if (!dir || !*dir)
+			return NULL;
+	}
+	if (!(path = malloc(strlen(dir) + strlen(sub) + 2))) {
+		fprintf(stderr, "%s: %s\n", PROGRAM, strerror(errno));
+		exit(EXIT_TROUBLE);
+	}
+	sprintf(path, "%s/%s", dir, sub);
+	return path;
+}
+
+/* Read "key = value" lines; '#' starts a comment line.  A missing file is
+ * fine; anything wrong in one that exists is an error. */
+static void read_config(void)
+{
+	char *name = config_path(), *line = NULL, *key, *val, *eq;
+	size_t cap = 0;
+	long n = 0;
+	FILE *f;
+
+	if (!name)
+		return;
+	if (!(f = fopen(name, "r"))) {
+		if (errno == ENOENT) {
+			free(name);
+			return;
+		}
+		fprintf(stderr, "%s: %s: %s\n", PROGRAM, name, strerror(errno));
+		exit(EXIT_TROUBLE);
+	}
+	while (getline(&line, &cap, f) != -1) {
+		n++;
+		key = trim(line);
+		if (*key == '\0' || *key == '#')
+			continue;
+		if (!(eq = strchr(key, '=')))
+			config_error(name, n, "invalid line", key);
+		*eq = '\0';
+		key = trim(key);
+		val = trim(eq + 1);
+		if (strcmp(key, "epoch") != 0)
+			config_error(name, n, "unknown setting", key);
+		if (dk_set_epoch(val))
+			config_error(name, n, "invalid epoch", val);
+	}
+	if (ferror(f)) {
+		fprintf(stderr, "%s: %s: read error: %s\n", PROGRAM, name, strerror(errno));
+		exit(EXIT_TROUBLE);
+	}
+	free(line);
+	fclose(f);
+	free(name);
+}
+
+/* day 0 comes from --epoch (OPT), else DAYKEEP_EPOCH, else the config file */
+static void set_epoch(const char *opt)
+{
+	const char *env = getenv("DAYKEEP_EPOCH");
+
+	if (opt) {
+		if (dk_set_epoch(opt)) {
+			fprintf(stderr, "%s: invalid argument '%s' for '--epoch'\n", PROGRAM, opt);
+			try_help();
+		}
+	} else if (env && *env) {
+		if (dk_set_epoch(env)) {
+			fprintf(stderr, "%s: invalid DAYKEEP_EPOCH '%s'\n", PROGRAM, env);
+			exit(EXIT_TROUBLE);
+		}
+	} else {
+		read_config();
+	}
+}
+
+/* --- converting --------------------------------------------------------- */
 
 static int is_date(const char *s)
 {
@@ -212,8 +328,6 @@ static void add_range(dk_secs start, dk_secs end)
 	if (!summarize)
 		print_dur(total);
 }
-
-#define BLANKS " \t\r\n\f\v"
 
 /* Sum the ranges on one line.  Tokens are '-' and runs of anything else
  * between blanks and dashes, so "10:00-11:00" works.  An error drops the
@@ -361,7 +475,7 @@ static void close_stdout(void)
 	}
 }
 
-enum { OPT_NOW = 256, OPT_FORMAT, OPT_HM, OPT_HELP, OPT_VERSION };
+enum { OPT_NOW = 256, OPT_FORMAT, OPT_HM, OPT_EPOCH, OPT_HELP, OPT_VERSION };
 
 static const struct option longopts[] = {
 	{ "file",      required_argument, NULL, 'f' },
@@ -373,6 +487,7 @@ static const struct option longopts[] = {
 	{ "track",     no_argument,       NULL, 't' },
 	{ "append",    required_argument, NULL, 'a' },
 	{ "utc",       no_argument,       NULL, 'u' },
+	{ "epoch",     required_argument, NULL, OPT_EPOCH },
 	{ "help",      no_argument,       NULL, OPT_HELP },
 	{ "version",   no_argument,       NULL, OPT_VERSION },
 	{ NULL, 0, NULL, 0 }
@@ -381,7 +496,7 @@ static const struct option longopts[] = {
 int main(int argc, char **argv)
 {
 	enum { MODE_NONE, MODE_NOW, MODE_CONVERT, MODE_TRACK } mode = MODE_NONE;
-	const char *log = NULL;
+	const char *log = NULL, *epoch = NULL;
 	char buf[DK_BUFSZ];
 	dk_secs t_now;
 	int c, i;
@@ -408,6 +523,9 @@ int main(int argc, char **argv)
 			break;
 		case 'u':
 			utc = 1;
+			break;
+		case OPT_EPOCH:
+			epoch = optarg;
 			break;
 		case 'f':
 			files[nfiles++] = optarg;
@@ -451,6 +569,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%s: -a works only with --track\n", PROGRAM);
 		try_help();
 	}
+	set_epoch(epoch);
 	t_now = clock_now();
 	switch (mode) {
 	case MODE_TRACK:

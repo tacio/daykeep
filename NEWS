@@ -5,7 +5,9 @@ daykeep NEWS
 ** New program
 
   daykeep works in decimal time: a day number plus a fraction of a day,
-  counted from day 0 = 1987-07-28 00:00 UTC.  90 minutes is .0625.
+  counted from day 0 = 2000-01-01 00:00 UTC.  90 minutes is .0625.
+  --epoch=DATE, the DAYKEEP_EPOCH environment variable or an
+  'epoch = DATE' line in ~/.config/daykeep/config moves day 0.
 
   It sums START - END ranges from the operands, from -f FILE or from
   standard input, printing the running total as a decimal (the default),

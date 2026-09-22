@@ -21,9 +21,13 @@
 bin=${1:-./daykeep}
 fail=0
 
-export DAYKEEP_NOW=14301.4564      # 2026-09-22 10:57:13 UTC, today = 14301
+export DAYKEEP_NOW=09761.4564      # 2026-09-22 10:57:13 UTC, today = 9761
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT
+unset POSIXLY_CORRECT DAYKEEP_EPOCH
+
+# an empty config directory, so the user's own config can't interfere
+tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+export XDG_CONFIG_HOME=$tmp/config
 
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }
@@ -42,52 +46,53 @@ status() { # name, expected exit status, args...
 }
 
 # clock string of day $1 plus $2 seconds in the local zone, from date(1)
-day() { date -d @$(( ($1 + 6417) * 86400 + ${2:-0} )) '+%F %T %z'; }
+day() { date -d @$(( ($1 + 10957) * 86400 + ${2:-0} )) '+%F %T %z'; }
 
 # --- left completion: most recent day <= today ending in the digits --------
-check today-full   "$(day 14301)" -c 14301
-check tail-3       "$(day 14301)" -c 301
-check tail-1       "$(day 14299)" -c 9
-check tail-past    "$(day 13302)" -c 302
-check tail-zeros   "$(day 10301)" -c 0301
-check tail-today   "$(day 14301)" -c 1
+check today-full   "$(day 9761)"  -c 9761
+check tail-3       "$(day 9761)"  -c 761
+check tail-1       "$(day 9759)"  -c 9
+check tail-past    "$(day 8762)"  -c 762
+check tail-zeros   "$(day 9061)"  -c 061
+check tail-today   "$(day 9761)"  -c 1
+check full-4       "$(day 761)"   -c 0761     # as many digits as today: literal
 check full-future  "$(day 15000)" -c 15000
 check full-past    "$(day 7)"     -c 00007
 
 # --- '+': first day >= today ending in the digits --------------------------
-check plus-1       "$(day 14309)" -c +9
-check plus-today   "$(day 14301)" -c +301
-check plus-next    "$(day 15300)" -c +300
-check plus-frac    "$(day 14301 43200)" -c +.5
+check plus-1       "$(day 9769)"  -c +9
+check plus-today   "$(day 9761)"  -c +761
+check plus-next    "$(day 10760)" -c +760
+check plus-frac    "$(day 9761 43200)" -c +.5
 
 # --- right digits: omitted ones are zeros; rounding to the second ----------
-check frac-only    "$(day 14301 43200)" -c .5
-check frac-pad     "$(day 14301 43200)" -c .5000
-check frac-long    "$(day 14301 39433)" -c 14301.45640000001
-check day-dot      "$(day 14299)"       -c 9.
-check frac-step    "$(day 14301 9)"     -c .0001
+check frac-only    "$(day 9761 43200)" -c .5
+check frac-pad     "$(day 9761 43200)" -c .5000
+check frac-long    "$(day 9761 39433)" -c 9761.45640000001
+check day-dot      "$(day 9759)"       -c 9.
+check frac-step    "$(day 9761 9)"     -c .0001
 
 # --- HH:MM: wall-clock time today, local unless -u ------------------------
-check hm-local     14301.5417 -c 10:00           # 13:00 UTC
-check hm-seconds   14301.5417 -c 10:00:00
-check hm-utc       14301.4167 -u -c 10:00
-check hm-utc-late  14301.9993 -u -c 23:59
-# at 22:12 local the UTC day is already 14302, but "today" is the local date
-DAYKEEP_NOW=14302.0500 check hm-local-date 14301.5417 -c 10:00
+check hm-local     09761.5417 -c 10:00           # 13:00 UTC
+check hm-seconds   09761.5417 -c 10:00:00
+check hm-utc       09761.4167 -u -c 10:00
+check hm-utc-late  09761.9993 -u -c 23:59
+# at 22:12 local the UTC day is already 9762, but "today" is the local date
+DAYKEEP_NOW=09762.0500 check hm-local-date 09761.5417 -c 10:00
 
 # --- ISO dates --------------------------------------------------------------
-check iso-date     14301.1250 -c 2026-09-22                 # local midnight
-check iso-utc      14301.0000 -u -c 2026-09-22
-check iso-time     14301.4167 -c 2026-09-22T07:00
-check iso-zulu     14301.4167 -c 2026-09-22T10:00Z
-check iso-offset   14301.4167 -c '2026-09-22 12:00:00 +0200'
-check iso-colon    14301.4167 -c '2026-09-22 12:00 +02:00'
-check epoch        00000.0000 -c 1987-07-28T00:00Z
-check leap-day     12634.0000 -u -c 2022-02-28
-check leap-feb29   13365.0000 -u -c 2024-02-29
+check iso-date     09761.1250 -c 2026-09-22                 # local midnight
+check iso-utc      09761.0000 -u -c 2026-09-22
+check iso-time     09761.4167 -c 2026-09-22T07:00
+check iso-zulu     09761.4167 -c 2026-09-22T10:00Z
+check iso-offset   09761.4167 -c '2026-09-22 12:00:00 +0200'
+check iso-colon    09761.4167 -c '2026-09-22 12:00 +02:00'
+check epoch        00000.0000 -c 2000-01-01T00:00Z
+check leap-day     08094.0000 -u -c 2022-02-28
+check leap-feb29   08825.0000 -u -c 2024-02-29
 
 # --- round trips ------------------------------------------------------------
-for v in 14301.4564 14301.0000 14301.9999 13000.1234 10000.0001 09999.1234 00000.0001; do
+for v in 09761.4564 09761.0000 09761.9999 13000.1234 10000.0001 09999.1234 00000.0001; do
 	back=$("$bin" -c "$("$bin" -c "$v")")
 	if [ "$back" == "$v" ]; then ok "round-trip $v"; else bad "round-trip $v" "got [$back]"; fi
 	back=$("$bin" -u -c "$("$bin" -u -c "$v")")
@@ -95,19 +100,19 @@ for v in 14301.4564 14301.0000 14301.9999 13000.1234 10000.0001 09999.1234 00000
 done
 
 # --- --now ------------------------------------------------------------------
-check now          14301.4564 --now
-DAYKEEP_NOW=@1790035200 check now-at 14301.0000 --now
-DAYKEEP_NOW=@1790035243 check now-round-up   14301.0005 --now   # 43 s = 4.98 steps
-DAYKEEP_NOW=@1790035204 check now-round-down 14301.0000 --now   # 4 s < half a step
+check now          09761.4564 --now
+DAYKEEP_NOW=@1790035200 check now-at 09761.0000 --now
+DAYKEEP_NOW=@1790035243 check now-round-up   09761.0005 --now   # 43 s = 4.98 steps
+DAYKEEP_NOW=@1790035204 check now-round-down 09761.0000 --now   # 4 s < half a step
 # the real clock agrees with date(1) to within one step
 real=$(env -u DAYKEEP_NOW "$bin" --now)
-want=$(echo "scale=4; ($(date -u +%s) - 554428800) / 86400" | bc)
+want=$(echo "scale=4; ($(date -u +%s) - 946684800) / 86400" | bc)
 diff=$(echo "d = ($real - $want) * 10000; if (d < 0) d = -d; d <= 2" | bc)
 if [ "$diff" == 1 ]; then ok now-real; else bad now-real "got $real want ~$want"; fi
 
 # --- invalid input and usage ------------------------------------------------
 check bad-value   "daykeep: invalid value '.x'" -c .x
-check bad-keeps-going $'daykeep: invalid value \'x\'\n'"$(day 14299)" -c x 9
+check bad-keeps-going $'daykeep: invalid value \'x\'\n'"$(day 9759)" -c x 9
 status bad-status      1 -c 9 .x
 status bad-hm          1 -c 24:00
 status bad-hm-min      1 -c 10:60
@@ -127,9 +132,51 @@ status help            0 --help
 status version         0 --version
 
 # getopt permutation: options after operands, and -- ending them
-check permute      "$(day 14299)" 9 -c
-check dashdash     14301.4167 -c -u -- 10:00
+check permute      "$(day 9759)" 9 -c
+check dashdash     09761.4167 -c -u -- 10:00
 POSIXLY_CORRECT=1 status posixly-correct 1 9 -c    # -c is range text then
+
+# --- the epoch: --epoch, then DAYKEEP_EPOCH, then the config file -----------
+check epoch-option  14301.4167 --epoch=1987-07-28 -c 2026-09-22T10:00Z
+check epoch-time    09761.1250 --epoch='2000-01-01 00:00 +0300' -c 2026-09-22T00:00Z
+check epoch-offset  09761.0000 --epoch='2000-01-01 00:00 -0300' -c 2026-09-22   # local midnight
+check epoch-zulu    09761.0000 --epoch=2000-01-01T00:00Z -c 2026-09-22T00:00Z
+DAYKEEP_EPOCH=1987-07-28 check epoch-env 14301.4167 -c 2026-09-22T10:00Z
+DAYKEEP_EPOCH=1987-07-28 check epoch-option-wins 09761.4167 --epoch=2000-01-01 -c 2026-09-22T10:00Z
+# DAYKEEP_NOW's stamp counts from the chosen epoch
+check epoch-now     09761.4564 --epoch=1987-07-28 --now
+check epoch-bad     "daykeep: invalid argument 'x' for '--epoch'"$'\n'"Try 'daykeep --help' for more information." --epoch=x --now
+status epoch-bad-status 2 --epoch=2000-13-01 --now
+DAYKEEP_EPOCH=x check epoch-env-bad "daykeep: invalid DAYKEEP_EPOCH 'x'" --now
+DAYKEEP_EPOCH=x status epoch-env-bad-status 2 --now
+
+cfg=$XDG_CONFIG_HOME/daykeep/config
+mkdir -p "${cfg%/*}"
+check config-missing 09761.4167 -c 2026-09-22T10:00Z
+printf '# old numbering\n\n  epoch =  1987-07-28 \n' >"$cfg"
+check config-epoch   14301.4167 -c 2026-09-22T10:00Z
+DAYKEEP_EPOCH=2000-01-01 check config-env-wins 09761.4167 -c 2026-09-22T10:00Z
+check config-option-wins 09761.4167 --epoch=2000-01-01 -c 2026-09-22T10:00Z
+printf 'epoch = 1987-07-28\nepoch = 2000-01-01 00:00 -0300\n' >"$cfg"
+check config-last-wins 09761.0000 -c 2026-09-22
+printf '\ncolour = red\n' >"$cfg"
+check config-unknown "daykeep: $cfg:2: unknown setting 'colour'" --now
+status config-unknown-status 2 --now
+printf 'epoch 1987-07-28\n' >"$cfg"
+check config-no-eq   "daykeep: $cfg:1: invalid line 'epoch 1987-07-28'" --now
+printf 'epoch = soon\n' >"$cfg"
+check config-bad     "daykeep: $cfg:1: invalid epoch 'soon'" --now
+status config-bad-status 2 --now
+DAYKEEP_EPOCH=2000-01-01 check config-bypass 09761.4564 --now   # a broken file can be bypassed
+rm "$cfg"; mkdir "$cfg"
+status config-dir    2 --now
+rmdir "$cfg"
+# a relative XDG_CONFIG_HOME is ignored in favour of ~/.config
+mkdir -p "$tmp/home/.config/daykeep"
+echo 'epoch = 1987-07-28' >"$tmp/home/.config/daykeep/config"
+HOME=$tmp/home XDG_CONFIG_HOME=rel check config-home 14301.4167 -c 2026-09-22T10:00Z
+HOME=$tmp/home check config-xdg-first 09761.4167 -c 2026-09-22T10:00Z
+env -u HOME -u XDG_CONFIG_HOME "$bin" --now >/dev/null 2>&1 && ok config-none || bad config-none "exit $?"
 
 # write errors on stdout are reported
 if [ -w /dev/full ]; then

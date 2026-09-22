@@ -60,7 +60,7 @@ calendar.
 @node Overview
 @chapter Overview
 
-A decimal stamp such as @samp{14301.4564} names a moment: day 14301,
+A decimal stamp such as @samp{09761.4564} names a moment: day 9761,
 0.4564 of the way through it.  A duration is a fraction of a day, so
 90 minutes is @samp{.0625} and a working day of eight hours is
 @samp{.3333}.  Durations add as plain decimals.
@@ -72,7 +72,7 @@ $ daykeep --hm '09:00 - 10:30' 11:00 - 11:45
 1h 30m
 2h 15m
 $ daykeep --now
-14301.4564
+09761.4564
 @end example
 
 daykeep also reads @samp{HH:MM} wall-clock times, so logs written for
@@ -84,6 +84,7 @@ be printed as well (@pxref{Summing ranges}).
 
 @menu
 * The epoch::           Day 0 and why it is in UTC.
+* Changing the epoch::  --epoch, DAYKEEP_EPOCH and the config file.
 * Units::               What the decimals mean.
 * Printed forms::       How stamps and durations are printed.
 @end menu
@@ -93,24 +94,24 @@ be printed as well (@pxref{Summing ranges}).
 
 @cindex epoch
 @cindex day 0
-Day 0 is 1987-07-28, and it starts at 00:00 UTC.  Day numbers count
-whole days from there: day 1 is 1987-07-29, and day 14301 is
-2026-09-22.  Days before the epoch have negative numbers.  In terms of
-Unix time:
+Day 0 is 2000-01-01, and it starts at 00:00 UTC, unless you choose
+another epoch (@pxref{Changing the epoch}).  Day numbers count whole
+days from there: day 1 is 2000-01-02, and day 9761 is 2026-09-22.
+Days before the epoch have negative numbers.  In terms of Unix time:
 
 @example
-stamp = unix_seconds / 86400 - 6417
+stamp = unix_seconds / 86400 - 10957
 @end example
 
 @noindent
-since 1987-07-28 is 6417 days after 1970-01-01.  You can check the
+since 2000-01-01 is 10957 days after 1970-01-01.  You can check the
 current stamp against @command{date} and @command{bc}:
 
 @example
-$ echo "scale=4; ($(date -u +%s) - $(date -u -d 1987-07-28 +%s)) / 86400" | bc
-14301.4564
+$ echo "scale=4; ($(date -u +%s) - $(date -u -d 2000-01-01 +%s)) / 86400" | bc
+9761.4564
 $ daykeep --now
-14301.4564
+09761.4564
 @end example
 
 @cindex UTC
@@ -123,6 +124,54 @@ evening (at 21:00 in UTC@minus{}3), and east of it one begins in the
 morning.  Work that runs past that point ends on the next day number,
 and daykeep handles that as it handles work past local midnight
 (@pxref{Ranges}).
+
+@node Changing the epoch
+@section Changing the epoch
+
+@cindex epoch, changing
+@cindex configuration file
+Day 0 can be any moment.  daykeep takes the first of these that is set:
+
+@enumerate
+@item
+the @option{--epoch=@var{date}} option;
+@item
+the @env{DAYKEEP_EPOCH} environment variable;
+@item
+an @samp{epoch = @var{date}} line in the configuration file,
+@file{$XDG_CONFIG_HOME/daykeep/config}, or
+@file{~/.config/daykeep/config} when @env{XDG_CONFIG_HOME} is unset or
+not an absolute name;
+@item
+2000-01-01 00:00 UTC.
+@end enumerate
+
+@var{date} is written as @option{--convert} reads a date
+(@pxref{Now and convert}), but without an offset it is UTC, not local
+time, so it names the same moment wherever daykeep runs.  An offset
+makes days start at another hour; this configuration file starts them
+at midnight in UTC@minus{}3, and keeps the numbers of an older epoch
+in a comment:
+
+@example
+# ~/.config/daykeep/config
+# epoch = 1987-07-28
+epoch = 2000-01-01 00:00 -0300
+@end example
+
+In the file, blank lines and lines starting with @samp{#} are ignored,
+and blanks around the key and the value do not matter.  @samp{epoch}
+is the only setting; if it appears twice, the last one counts.  A file
+that does not exist is fine, but a line daykeep cannot read, or a file
+it cannot open, is an error (exit status 2).  The file is read only
+when neither the option nor the variable is set, so either one gets
+around a broken file.
+
+@cindex log, and the epoch
+Stamps count from the epoch, so a log only sums correctly with the
+epoch it was written with.  Durations do not depend on it.  If you move
+the epoch, keep the old one in @env{DAYKEEP_EPOCH} or
+@option{--epoch} when reading old logs, or convert them first.
 
 @node Units
 @section Units
@@ -154,11 +203,11 @@ do.  Other durations are rounded to the nearest step, half up.
 @itemize
 @item
 A stamp is printed with a day number of at least five digits and four
-decimals: @samp{14301.4564}, @samp{00007.0000}.  Every stamp from day
+decimals: @samp{09761.4564}, @samp{00007.0000}.  Every stamp from day
 0 on reads back as exactly that stamp, without completion (@pxref{Stamps}).
 A moment before the epoch is printed as its negative day number plus
 the fraction into that day: @samp{-0001.1250} is 03:00 UTC on day
-@minus{}1, 1987-07-27.  Such stamps are printed but not read.
+@minus{}1, 1999-12-31.  Such stamps are printed but not read.
 
 @item
 A duration under one day is printed without a leading zero:
@@ -179,8 +228,8 @@ be short.  daykeep fills in what is missing.
 
 @table @asis
 @item Missing right digits
-are zeros.  @samp{.5} is @samp{.5000}, and @samp{14301} is
-@samp{14301.0000}.
+are zeros.  @samp{.5} is @samp{.5000}, and @samp{9761} is
+@samp{09761.0000}.
 
 @item Missing left digits
 are taken from today.  The digits you give are the last digits of the
@@ -193,18 +242,19 @@ picks the @emph{first} day from today on that ends in those digits
 instead.
 @end table
 
-With today being day 14301:
+With today being day 9761:
 
-@multitable {@samp{+301.25}} {14301.2500}
+@multitable {@samp{+761.25}} {09761.2500}
 @headitem Typed @tab Means
-@item @samp{.5}       @tab 14301.5000
-@item @samp{301}      @tab 14301.0000
-@item @samp{9}        @tab 14299.0000
-@item @samp{302}      @tab 13302.0000
-@item @samp{+9}       @tab 14309.0000
-@item @samp{+301.25}  @tab 14301.2500
-@item @samp{+302}     @tab 14302.0000
-@item @samp{14250.1}  @tab 14250.1000
+@item @samp{.5}       @tab 09761.5000
+@item @samp{761}      @tab 09761.0000
+@item @samp{9}        @tab 09759.0000
+@item @samp{762}      @tab 08762.0000
+@item @samp{+9}       @tab 09769.0000
+@item @samp{+761.25}  @tab 09761.2500
+@item @samp{+762}     @tab 09762.0000
+@item @samp{9750.1}   @tab 09750.1000
+@item @samp{0761}     @tab 00761.0000
 @end multitable
 
 A stamp with as many day digits as today's number, or more, is taken
@@ -231,7 +281,7 @@ entry that runs past the start of a day number needs no day digits:
 @example
 $ daykeep .9 - .1
 .2000
-$ daykeep 14301.375 - .4375
+$ daykeep 9761.375 - .4375
 .0625
 $ daykeep --hm 23:24 - 00:52
 1h 28m
@@ -268,8 +318,8 @@ if there were no ranges at all.
 
 @example
 $ cat today.log
-14301.3750 - 14301.4375
-14301.4583 - 14301.5000
+09761.3750 - 09761.4375
+09761.4583 - 09761.5000
 $ daykeep -f today.log
 .0625
 .1042
@@ -295,7 +345,7 @@ at the end.
 A decimal stamp becomes a local date and time, in a form that
 @option{--convert} reads back:
 @example
-$ TZ=America/Sao_Paulo daykeep -c 14301.5
+$ TZ=America/Sao_Paulo daykeep -c 9761.5
 2026-09-22 09:00:00 -0300
 @end example
 
@@ -304,9 +354,9 @@ $ TZ=America/Sao_Paulo daykeep -c 14301.5
 @samp{YYYY-MM-DD[ HH:MM[:SS]][ +HHMM]}, becomes a stamp.  A date with
 no offset is local time.
 @example
-$ daykeep -c 1987-07-28 '2026-09-22 12:00 +0000'
+$ daykeep -c 2000-01-01 '2026-09-22 12:00 +0000'
 00000.1250
-14301.5000
+09761.5000
 @end example
 @end itemize
 
@@ -324,8 +374,8 @@ a table of entries and a running total:
 
 @example
 $ daykeep -t -a work.log
- 1  14301.3750 - 14301.4375   .0625
- 2  14301.4564 - ...          (running)
+ 1  09761.3750 - 09761.4375   .0625
+ 2  09761.4564 - ...          (running)
 total .0625
 [enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit
 @end example
@@ -339,7 +389,7 @@ entry ends before it starts; edit the end afterwards.
 Remove the last stamp.
 @item @kbd{e}
 Edit the last stamp.  It takes any stamp form (@samp{.4},
-@samp{14:30}, @samp{14301.4}).  The first stamp is completed from
+@samp{14:30}, @samp{9761.4}).  The first stamp is completed from
 today, and later ones from the stamp before, as a range @var{end} is,
 so @samp{.9} then @samp{.1} ends on the next day.
 @item @kbd{s}
@@ -409,6 +459,10 @@ With @option{--track}, keep the entries in @var{log}.
 @itemx --utc
 Read and print wall-clock times in UTC instead of local time.
 
+@item --epoch=@var{date}
+Count days from @var{date} instead of 2000-01-01 00:00 UTC
+(@pxref{Changing the epoch}).
+
 @item --help
 Print a usage message and exit.
 
@@ -431,6 +485,13 @@ A usage error, or an I/O error (including a failed write to standard
 output).
 @end table
 
+@section Files
+
+@table @file
+@item ~/.config/daykeep/config
+Settings; @pxref{Changing the epoch}.
+@end table
+
 @section Environment
 
 @table @env
@@ -439,9 +500,14 @@ The time zone for @samp{HH:MM} and for dates, unless @option{-u} is
 given.
 @item POSIXLY_CORRECT
 If set, options must come before operands.
+@item DAYKEEP_EPOCH
+Day 0, unless @option{--epoch} is given (@pxref{Changing the epoch}).
+@item XDG_CONFIG_HOME
+Where the configuration file is looked for, as
+@file{$XDG_CONFIG_HOME/daykeep/config}; @file{~/.config} if unset.
 @item DAYKEEP_NOW
 If set, used as the current time: a full stamp such as
-@samp{14301.4564}, or @samp{@@@var{seconds}} since the Unix epoch.  It
+@samp{09761.4564}, or @samp{@@@var{seconds}} since the Unix epoch.  It
 is meant for tests.
 @end table
 
@@ -468,7 +534,7 @@ set -g status-right '#(daykeep -s -f ~/work.log)'
 @item
 Check a stamp against @command{date}:
 @example
-$ date -d @@$(( (14301 + 6417) * 86400 ))
+$ date -d @@$(( (9761 + 10957) * 86400 ))
 @end example
 @end itemize
 

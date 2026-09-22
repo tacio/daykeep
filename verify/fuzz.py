@@ -41,7 +41,7 @@ import spec          # noqa: E402
 import dkspec as S   # noqa: E402
 
 DAY = S.DAY
-EPOCH_UNIX = 6417 * DAY
+EPOCH_UNIX = 10957 * DAY
 ITERS = int(os.environ.get("FUZZ_ITERS", "300"))
 SEED = int(os.environ.get("FUZZ_SEED", "20260922"))
 TIMEOUT = 10
@@ -206,7 +206,7 @@ def sum_model(text, now, off, fmt, summarize):
 
 
 def rand_now(rng):
-    day = rng.choice([14301, 14301, 14301, 14300, 9999, 10000, 99999, 100000,
+    day = rng.choice([9761, 9761, 14301, 14301, 14300, 9999, 10000, 99999, 100000,
                       123456, 3, 0, -2])
     return day * DAY + rng.randrange(DAY)
 

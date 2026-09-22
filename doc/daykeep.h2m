@@ -11,11 +11,11 @@ daykeep \- sum and track time in decimal days
 .RB "$ " "daykeep \-s \-\-format=minutes \-f today.log"
 135
 .RB "$ " "daykeep \-\-now"
-14301.4564
+09761.4564
 .RB "$ " "daykeep \-\-convert .5 +9 10:00"
 2026\-09\-22 09:00:00 \-0300
 2026\-09\-29 21:00:00 \-0300
-14301.5417
+09761.5417
 .RB "$ " "daykeep \-t \-a work.log"
 .fi
 .PP
@@ -37,12 +37,38 @@ is given.
 .B POSIXLY_CORRECT
 If set, options must come before the operands.
 .TP
+.B DAYKEEP_EPOCH
+Day 0, unless
+.B \-\-epoch
+is given; it overrides the config file.
+.TP
+.B XDG_CONFIG_HOME
+The directory holding
+.IR daykeep/config .
+.TP
 .B DAYKEEP_NOW
 If set, used as the current time instead of the clock: a full stamp such as
-.B 14301.4564
+.B 09761.4564
 or
 .BI @ SECONDS
 since the Unix epoch.  It is meant for tests.
+
+[FILES]
+.TP
+.I ~/.config/daykeep/config
+Settings, one
+.I "key = value"
+per line;
+.B #
+starts a comment.  The only key is
+.BR epoch ,
+day 0, as for
+.BR \-\-epoch .
+The file is
+.I $XDG_CONFIG_HOME/daykeep/config
+when
+.B XDG_CONFIG_HOME
+is set.
 
 [SEE ALSO]
 .BR date (1)

@@ -22,9 +22,13 @@ bin=${1:-./daykeep}
 tk=${2:-}
 fail=0
 
-export DAYKEEP_NOW=14301.4564      # 2026-09-22 10:57:13 UTC = 07:57:13 local
+export DAYKEEP_NOW=14301.4564      # 10:57:13 UTC = 07:57:13 local
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT
+unset POSIXLY_CORRECT DAYKEEP_EPOCH
+
+# an empty config directory, so the user's own config can't interfere
+tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+export XDG_CONFIG_HOME=$tmp/config
 
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }
@@ -90,7 +94,6 @@ check none        ''                 ''
 check long        1.0000             -s .0 - .5 .5 - .0
 
 # --- files and stdin ------------------------------------------------------------
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '14301.3750 - 14301.4375\n\n14301.1000 - 14301.1625\r\n' > "$tmp/a"
 printf '09:00 - 10:30\n' > "$tmp/b"
 check file        $'.0625\n.1250'     -f "$tmp/a"

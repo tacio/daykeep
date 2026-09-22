@@ -37,7 +37,8 @@ $ timekeep "$(cat today.log)"      # one range per line
 
 `daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
 time: a day number plus a fraction of a day, counted from day 0 =
-1987-07-28 00:00 UTC. 90 minutes is `.0625`. It sums ranges, tracks time
+2000-01-01 00:00 UTC (change it with `--epoch`, `DAYKEEP_EPOCH` or
+`epoch = DATE` in `~/.config/daykeep/config`). 90 minutes is `.0625`. It sums ranges, tracks time
 interactively, and does `--now` and `--convert`.
 
 ```console
@@ -49,12 +50,12 @@ $ daykeep --hm '09:00 - 10:30' 11:00 - 11:45    # old timekeep input works
 $ daykeep -s --format=minutes -f today.log      # -f FILE, else stdin
 135
 $ daykeep --now
-14301.4564
+09761.4564
 $ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
 2026-09-22 09:00:00 -0300
 2026-09-19 21:00:00 -0300
 2026-09-29 21:00:00 -0300
-14301.5417
+09761.5417
 ```
 
 See `daykeep --help` for the digit-completion rules, `man daykeep`, or
@@ -66,8 +67,8 @@ See `daykeep --help` for the digit-completion rules, `man daykeep`, or
 
 ```console
 $ daykeep -t -a work.log
- 1  14301.3750 - 14301.4375   .0625
- 2  14301.4564 - ...          (running)
+ 1  09761.3750 - 09761.4375   .0625
+ 2  09761.4564 - ...          (running)
 total .0625
 [enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit
 ```
@@ -76,7 +77,7 @@ total .0625
   the start was edited into the future, the entry ends at its start instead
   (then edit the end), so no entry ends before it starts.
 - `e` edits the last stamp. It takes any stamp form (`.4`, `14:30`,
-  `14301.4`), completed from the stamp before it, so `.9` then `.1` ends the
+  `9761.4`), completed from the stamp before it, so `.9` then `.1` ends the
   next day.
 - `x` removes the last stamp. `q`, `^C`, `^D` or end of input quit.
 - With `-a LOG`, the session's entries go to LOG as `START - END` lines

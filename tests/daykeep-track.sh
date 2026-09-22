@@ -24,11 +24,12 @@
 bin=$(realpath "${1:-./daykeep}")
 fail=0
 
-export DAYKEEP_NOW=14301.4564      # 2026-09-22 10:57:13 UTC = 07:57:13 local
+export DAYKEEP_NOW=14301.4564      # 10:57:13 UTC = 07:57:13 local
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT
+unset POSIXLY_CORRECT DAYKEEP_EPOCH
 
 tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+export XDG_CONFIG_HOME=$tmp/config  # empty, so the user's config can't interfere
 
 ok()  { echo "ok   $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }

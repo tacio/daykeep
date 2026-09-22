@@ -25,6 +25,8 @@
 #define MAX_DAY_DIGITS  9
 #define MAX_FRAC_DIGITS 9
 
+long long dk_epoch = DK_DEFAULT_EPOCH;
+
 long long dk_floor_div(long long a, long long b)
 {
 	long long q = a / b;
@@ -275,6 +277,16 @@ int dk_parse_date(const char *s, int utc, dk_secs *out)
 	if (from_tm(&tm, utc || have_off, out))
 		return -1;
 	*out -= off;
+	return 0;
+}
+
+int dk_set_epoch(const char *s)
+{
+	dk_secs v;
+
+	if (dk_parse_date(s, 1, &v))
+		return -1;
+	dk_epoch += v;
 	return 0;
 }
 

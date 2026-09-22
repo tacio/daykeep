@@ -4,7 +4,7 @@ state what the completion and rounding rules *mean*; dkprove.py checks a model
 of the C code against them, and checks the compiled C against the mirrors.
 Everything here is trusted -- keep it small and obvious.
 
-Values are integer seconds since day 0 = 1987-07-28 00:00 UTC.  A typed stamp
+Values are integer seconds since day 0 = 2000-01-01 00:00 UTC (the default).  A typed stamp
 is (n, typed, frac): n day digits whose value is typed (0 <= typed < 10**n),
 and a fraction of a day already converted to seconds (0 <= frac <= DAY)."""
 
