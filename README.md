@@ -3,6 +3,8 @@
 A tiny x86_64 Linux program that sums `HH:MM - HH:MM` time ranges. It is a
 study piece: a hand-built ELF of a few hundred bytes, formally verified.
 
+![Gone with the Wind](assets/gone-with-the-wind.webp)
+
 It ships in two forms that behave the same:
 
 | Binary       | Source        | Size     | Notes                                        |
@@ -12,6 +14,9 @@ It ships in two forms that behave the same:
 
 `timekeep.s` is the shipped program. `timekeep.c` is its readable reference.
 Both run the same tests, and `verify/` checks the assembled bytes formally.
+
+Read [The Sovereign Day](MANIFESTO.md), the manifesto behind daykeep's
+personal approach to time.
 
 ## Usage
 
