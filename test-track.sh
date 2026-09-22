@@ -4,8 +4,10 @@
 # a time.  Times are made deterministic by stamping, then editing to a fixed
 # value.  Keystrokes are assembled as escape-code TEXT (\n, \x7f) and expanded
 # once by `printf %b`, so no real newline is lost to command substitution.
+# It runs in a scratch directory, since quitting saves ./timekeep-<epoch>.txt.
 cd "$(dirname "$0")" || exit 1
-bin=${1:-./timekeep}
+bin=$(realpath "${1:-./timekeep}")
+tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT && cd "$tmp" || exit 1
 fail=0
 
 # stamp, then set the just-stamped entry to $1 via the edit line editor
@@ -38,6 +40,51 @@ check midnight "$(S 23:30)$(S 00:15)q" \
 # invalid edit keeps the previous value and reports it
 check bad-edit "$(S 09:00)$(S 10:00)e\\x7f\\x7f\\x7f\\x7f\\x7f25:00\\nq" \
 	$' 1  09:00 - 10:00   1h 0m\ntotal 1h 0m\ninvalid time \'25:00\' (want HH:MM), kept 10:00\n'
+
+# --- saving: [s] and quitting write the entries and total to one file, named
+# timekeep-<epoch>.txt with the epoch taken at start-up ---
+saved() { # name, keystroke-text, expected file content ('' = no file)
+	local name=$1 keys=$2 want=$3 got files t0 t1
+	rm -f timekeep-*.txt
+	t0=$(date +%s)
+	printf '%b' "$keys" | "$bin" >/dev/null
+	t1=$(date +%s)
+	files=(timekeep-*.txt)
+	if [ -z "$want" ]; then
+		[ ! -e "${files[0]}" ] && echo "ok   $name" \
+			|| { echo "FAIL $name: unexpected ${files[*]}"; fail=1; }
+		return
+	fi
+	local epoch=${files[0]#timekeep-}; epoch=${epoch%.txt}
+	got=$(cat "${files[0]}"; echo .); got=${got%.}
+	if [ ${#files[@]} -ne 1 ] || [[ ! $epoch =~ ^[0-9]+$ ]] \
+		|| ((epoch < t0 || epoch > t1)); then
+		echo "FAIL $name: files [${files[*]}] (want one, epoch in $t0..$t1)"; fail=1
+	elif [ "$got" != "$want" ]; then
+		echo "FAIL $name: got [$got] want [$want]"; fail=1
+	else
+		echo "ok   $name"
+	fi
+}
+
+saved save-on-quit "$(S 09:00)$(S 10:30)$(S 11:00)q" \
+	$' 1  09:00 - 10:30   1h 30m\n 2  11:00 - ...     (running)\ntotal 1h 30m\n'
+saved save-on-eof "$(S 09:00)$(S 10:30)" \
+	$' 1  09:00 - 10:30   1h 30m\ntotal 1h 30m\n'
+# [s] saves mid-session; quitting later overwrites the same file
+saved s-then-quit "$(S 09:00)s$(S 10:00)q" \
+	$' 1  09:00 - 10:00   1h 0m\ntotal 1h 0m\n'
+saved nothing-on-quit 'q' ''
+saved nothing-on-s 'sq' ''
+
+check s-empty 'sq' $'total 0h 0m\nnothing to save\n'
+s_msg() { # [s] reports the file it wrote
+	rm -f timekeep-*.txt
+	local got
+	got=$(printf '%b' "$(S 09:00)sq" | "$bin" | grep -a '^saved ' | head -1)
+	[ "$got" == "saved $(echo timekeep-*.txt)" ]
+}
+if s_msg; then echo "ok   s-reports-path"; else echo "FAIL s-reports-path"; fail=1; fi
 
 # --- live check: a bare stamp equals the wall clock (retry once on rollover) ---
 live() {

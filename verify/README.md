@@ -51,6 +51,8 @@ output region.
 
 - **Terminal restore:** with raw mode on, the quit path calls
   `ioctl(TCSETS, saved)` before `exit`. With raw mode off, it calls no ioctl.
+  Both start at `track_quit`, after the save that quitting does. The save
+  itself (`save`, and `render` writing to the file) is not proved.
 
 ### Sum mode, by induction over the loop's cut points
 

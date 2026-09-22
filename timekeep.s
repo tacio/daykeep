@@ -1,6 +1,7 @@
 # timekeep: track work sessions, or sum "HH:MM - HH:MM" ranges.
 #   timekeep <entries...>   sum ranges from argv, print running totals
-#   timekeep                (no args) interactive tracker
+#   timekeep                (no args) interactive tracker; [s] and quitting
+#                           save the table to ./timekeep-<epoch>.txt
 #
 # Hand-built x86_64 Linux ELF (flat binary, single .text, no libc).  The 56-byte
 # program header overlaps the tail of the 64-byte ELF header (e_phoff = 56); all
@@ -41,6 +42,9 @@
 .set F_MSGLEN,  0x1394          #    4  message length
 .set F_TZLEN,   0x1398          #    8  bytes read from tz file
 .set F_KEY,     0x13A0          #    1  single-byte read target
+.set F_PATH,    0x13B0          #   32  save file name, NUL-terminated
+.set F_PATHLEN, 0x13D0          #    4  its length, without the NUL
+.set F_OUTFD,   0x13D4          #    4  render's fd: 1, or the save file
 .set FRAME,     0x1400
 
 # ---------------------------------------------------------------- ELF header
@@ -78,7 +82,17 @@ inv1:		.ascii	"invalid time '"
 .set inv1len, . - inv1
 inv2:		.ascii	"' (want HH:MM), kept "
 .set inv2len, . - inv2
-promptstr:	.ascii	"[enter] stamp  [x] remove last  [e] edit last  [q] quit\n"
+pfxstr:		.ascii	"timekeep-"
+.set pfxlen, . - pfxstr
+sfxstr:		.asciz	".txt"
+.set sfxlen, . - sfxstr
+savedstr:	.ascii	"saved "
+.set savedlen, . - savedstr
+failstr:	.ascii	"cannot save "
+.set faillen, . - failstr
+emptystr:	.ascii	"nothing to save"
+.set emptylen, . - emptystr
+promptstr:	.ascii	"[enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit\n"
 .set promptlen, . - promptstr
 
 .globl _start
@@ -273,6 +287,24 @@ run_track:
 	mov	dword ptr [rbx+F_CLR], 0
 	mov	dword ptr [rbx+F_MSGLEN], 0
 	mov	qword ptr [rbx+F_TZLEN], 0
+	mov	dword ptr [rbx+F_OUTFD], 1
+	# save file name: "timekeep-" + decimal epoch + ".txt" (epoch fits in 32 bits)
+	xor	edi, edi
+	mov	eax, SYS_time
+	syscall
+	mov	r12, rax
+	lea	rdi, [rbx+F_PATH]
+	lea	rsi, [rip+pfxstr]
+	mov	ecx, pfxlen
+	call	copyn
+	mov	eax, r12d
+	call	emitdec
+	lea	rsi, [rip+sfxstr]
+	mov	ecx, sfxlen
+	call	copyn
+	lea	rcx, [rbx+F_PATH+1]     # length without the NUL
+	sub	rdi, rcx
+	mov	[rbx+F_PATHLEN], edi
 	# ioctl(0, TCGETS, termios)
 	xor	edi, edi
 	mov	esi, TCGETS
@@ -343,6 +375,8 @@ run_track:
 	je	.Lremove
 	cmp	al, 'e'
 	je	.Ledit
+	cmp	al, 's'
+	je	.Lsave
 	cmp	al, 'q'
 	je	.Lquit
 	cmp	al, 3
@@ -372,7 +406,27 @@ run_track:
 	jz	.Lkey
 	call	edit_last
 	jmp	.Lkey
+.Lsave:
+	cmp	dword ptr [rbx+F_N], 0
+	je	0f
+	call	save
+	jmp	.Lkey
+0:	lea	rdi, [rbx+F_MSG]
+	lea	rsi, [rip+emptystr]
+	mov	ecx, emptylen
+	call	copyn
+	mov	dword ptr [rbx+F_MSGLEN], emptylen
+	jmp	.Lkey
 .Lquit:
+	cmp	dword ptr [rbx+F_N], 0      # save on the way out, if there is anything
+	je	track_quit
+	call	save
+	lea	rsi, [rbx+F_MSG]            # and say where it went
+	mov	edx, [rbx+F_MSGLEN]
+	call	writestr
+	lea	rsi, [rip+nlstr]
+	mov	edx, 1
+	call	writestr
 track_quit:                             # public label for the terminal-restore proof
 	cmp	dword ptr [rbx+F_RAW], 0
 	je	0f
@@ -384,6 +438,36 @@ track_quit:                             # public label for the terminal-restore 
 0:	xor	edi, edi
 	mov	eax, SYS_exit
 	syscall
+
+# save: render the entries and total into F_PATH (created or truncated), then
+# leave "saved <path>" or "cannot save <path>" as the status message.
+save:
+	lea	rdi, [rbx+F_PATH]
+	mov	esi, 0x241              # O_WRONLY|O_CREAT|O_TRUNC
+	mov	edx, 0x1A4              # 0644
+	mov	eax, SYS_open
+	syscall
+	lea	rsi, [rip+failstr]
+	mov	ecx, faillen
+	test	rax, rax
+	js	0f
+	mov	[rbx+F_OUTFD], eax
+	call	render
+	mov	edi, [rbx+F_OUTFD]
+	mov	eax, SYS_close
+	syscall
+	mov	dword ptr [rbx+F_OUTFD], 1
+	lea	rsi, [rip+savedstr]
+	mov	ecx, savedlen
+0:	lea	rdi, [rbx+F_MSG]
+	call	copyn
+	lea	rsi, [rbx+F_PATH]
+	mov	ecx, [rbx+F_PATHLEN]
+	call	copyn
+	lea	rcx, [rbx+F_MSG]
+	sub	rdi, rcx
+	mov	[rbx+F_MSGLEN], edi
+	ret
 
 # now_minute -> eax = local minute-of-day.  keeps `now` in r13.
 now_minute:
@@ -461,8 +545,11 @@ tz_offset:
 	xor	eax, eax
 	ret
 
-# render the current screen.  rbx=frame; uses r14 as entry index.
+# render the current screen.  rbx=frame; uses r14 as entry index.  When
+# F_OUTFD is a save file, only the entries and total are written, to that fd.
 render:
+	cmp	dword ptr [rbx+F_OUTFD], 1
+	jne	0f
 	cmp	dword ptr [rbx+F_CLR], 0
 	je	0f
 	lea	rsi, [rip+clrstr]
@@ -518,7 +605,7 @@ render:
 	lea	rsi, [rbx+F_LINE]
 	mov	rdx, rdi
 	sub	rdx, rsi
-	call	writestr
+	call	rwrite
 	add	r14d, 2
 	jmp	.Lrow
 .Ltotal:
@@ -550,7 +637,9 @@ render:
 	lea	rsi, [rbx+F_LINE]
 	mov	rdx, rdi
 	sub	rdx, rsi
-	call	writestr
+	call	rwrite
+	cmp	dword ptr [rbx+F_OUTFD], 1  # a save file stops at the total
+	jne	.Lrender_ret
 	# optional message
 	mov	ecx, [rbx+F_MSGLEN]
 	test	ecx, ecx
@@ -566,6 +655,14 @@ render:
 	lea	rsi, [rip+promptstr]
 	mov	edx, promptlen
 	call	writestr
+.Lrender_ret:
+	ret
+
+# write(F_OUTFD, rsi, rdx): render's output, to the screen or a save file.
+rwrite:
+	mov	edi, [rbx+F_OUTFD]
+	mov	eax, SYS_write
+	syscall
 	ret
 
 # edit the last stamp.  rbx=frame; uses r14 = len, r15 = prev value.

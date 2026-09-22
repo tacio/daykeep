@@ -7,8 +7,8 @@ It ships in two forms that behave the same:
 
 | Binary       | Source        | Size     | Notes                                        |
 |--------------|---------------|----------|----------------------------------------------|
-| `timekeep`   | `timekeep.s`  | ~2.2 KB  | hand-built ELF, no libc, raw syscalls        |
-| `timekeep-c` | `timekeep.c`  | ~3.0 KB  | freestanding C reference for the assembly    |
+| `timekeep`   | `timekeep.s`  | ~2.7 KB  | hand-built ELF, no libc, raw syscalls        |
+| `timekeep-c` | `timekeep.c`  | ~3.3 KB  | freestanding C reference for the assembly    |
 
 `timekeep.s` is the shipped program. `timekeep.c` is its readable reference.
 Both run the same tests, and `verify/` checks the assembled bytes formally.
@@ -38,7 +38,7 @@ $ timekeep "$(cat today.log)"      # one range per line
  1  09:00 - 10:30   1h 30m
  2  11:00 - ...     (running)
 total 1h 30m
-[enter] stamp  [x] remove last  [e] edit last  [q] quit
+[enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit
 ```
 
 | Key                  | Action                                              |
@@ -46,12 +46,27 @@ total 1h 30m
 | Enter                | stamp the current local time (starts or ends an entry) |
 | `x`                  | remove the last stamp                               |
 | `e`                  | edit the last stamp (`HH:MM`; bad input keeps the old value) |
+| `s`                  | save the entries and total to a file (see below)    |
 | `q`, Ctrl-C, Ctrl-D  | quit                                                |
 
 On a terminal, stdin goes into raw mode (no echo, single keystrokes) and is
 restored on quit. The local time comes from `/etc/localtime` (TZif). If that
-file is missing or malformed, it falls back to UTC. Nothing is saved: the
-session exists only while the program runs. It holds at most 250 stamps.
+file is missing or malformed, it falls back to UTC. It holds at most 250 stamps.
+
+`s` and quitting (including end of input) save the entries and total, without
+the prompt, to `timekeep-<epoch>.txt` in the current directory. `<epoch>` is the
+Unix time when the tracker started, so each session gets its own file and a
+later save overwrites the earlier one. Nothing is saved while there are no
+stamps. The file name is reported on screen, or `cannot save ...` if the file
+can't be written. Being killed by a signal (for example, closing the terminal
+window) skips the save.
+
+```console
+$ cat timekeep-1790019845.txt
+ 1  09:00 - 10:30   1h 30m
+ 2  11:00 - ...     (running)
+total 1h 30m
+```
 
 ## Building
 
@@ -68,8 +83,9 @@ make clean
 
 - `test.sh <bin>`: sum-mode cases (wrapping, CRLF, blank lines, entries split
   across arguments, and so on).
-- `test-track.sh <bin>`: drives the tracker through a pipe. Times are made
-  predictable by stamping and then editing to a fixed value. A final
+- `test-track.sh <bin>`: drives the tracker through a pipe, in a scratch
+  directory. Times are made predictable by stamping and then editing to a fixed
+  value. The save cases check the file's name and contents. A final
   `live-clock` case checks that a bare stamp matches `date +%H:%M`.
 
 ## Formal verification

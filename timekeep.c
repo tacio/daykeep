@@ -2,7 +2,8 @@
  *
  *   timekeep <entries...>   sum the ranges given as arguments, print running
  *                           totals (e.g. `timekeep 9:00 - 10:00 11:00 12:00`)
- *   timekeep                (no args) start the interactive tracker
+ *   timekeep                (no args) start the interactive tracker; [s] and
+ *                           quitting save the table to ./timekeep-<epoch>.txt
  *
  * Freestanding x86_64 Linux: no libc, raw syscalls.  This file is the readable
  * reference for the hand-built ELF in timekeep.s; the two must behave alike.
@@ -25,6 +26,9 @@ static inline long sys3(long n, long a, long b, long c)
 #define SYS_time 201
 #define TCGETS 0x5401
 #define TCSETS 0x5402
+#define O_WRONLY 01
+#define O_CREAT  0100
+#define O_TRUNC  01000
 #define ICANON 0000002
 #define ECHO   0000010
 #define ISIG   0000001
@@ -178,6 +182,9 @@ struct track {
 	int n;
 	char msg[80];
 	int msglen;
+	char path[32];               /* save file name, NUL-terminated */
+	int pathlen;
+	int outfd;                   /* render's fd: 1, or the save file */
 };
 
 static void out(const char *s, long len) { sys3(SYS_write, 1, (long)s, len); }
@@ -190,7 +197,18 @@ static char *putdur(char *p, unsigned d) { return p + fmt_hm(p, d); }
 static void restore(struct track *t)
 { if (t->raw) sys3(SYS_ioctl, 0, TCSETS, (long)t->termios); }
 
-static void quit(struct track *t) { restore(t); sys3(SYS_exit, 0, 0, 0); }
+static void save(struct track *t);
+
+static void quit(struct track *t)
+{
+	if (t->n) {                  /* save on the way out, and say where it went */
+		save(t);
+		out(t->msg, t->msglen);
+		outs("\n");
+	}
+	restore(t);
+	sys3(SYS_exit, 0, 0, 0);
+}
 
 static unsigned now_minute(struct track *t)
 {
@@ -198,11 +216,13 @@ static unsigned now_minute(struct track *t)
 	return minute_of_day(now + tz_offset(t->tz, t->tzlen, now));
 }
 
+/* render the screen; when t->outfd is a save file, write only the entries and
+ * the total, to that fd */
 static void render(struct track *t)
 {
 	char buf[128], *p;
 	int i;
-	if (t->clr)
+	if (t->outfd == 1 && t->clr)
 		outs("\033[H\033[J");
 	for (i = 0; i < t->n; i += 2) {
 		unsigned idx = i / 2 + 1;
@@ -220,7 +240,7 @@ static void render(struct track *t)
 			p = puts_(p, " - ...     (running)");
 		}
 		*p++ = '\n';
-		out(buf, p - buf);
+		sys3(SYS_write, t->outfd, (long)buf, p - buf);
 	}
 	{
 		unsigned tot = 0;
@@ -229,14 +249,36 @@ static void render(struct track *t)
 		p = puts_(buf, "total ");
 		p = putdur(p, tot);
 		*p++ = '\n';
-		out(buf, p - buf);
+		sys3(SYS_write, t->outfd, (long)buf, p - buf);
 	}
+	if (t->outfd != 1)
+		return;
 	if (t->msglen) {
 		out(t->msg, t->msglen);
 		outs("\n");
 		t->msglen = 0;
 	}
-	outs("[enter] stamp  [x] remove last  [e] edit last  [q] quit\n");
+	outs("[enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit\n");
+}
+
+/* write the entries and total to t->path (created or truncated), then leave
+ * "saved <path>" or "cannot save <path>" as the status message */
+static void save(struct track *t)
+{
+	char *p;
+	int i, fd = sys3(SYS_open, (long)t->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		p = puts_(t->msg, "cannot save ");
+	} else {
+		t->outfd = fd;
+		render(t);
+		sys1(SYS_close, fd);
+		t->outfd = 1;
+		p = puts_(t->msg, "saved ");
+	}
+	for (i = 0; i < t->pathlen; i++)
+		*p++ = t->path[i];
+	t->msglen = p - t->msg;
 }
 
 /* validate "HH:MM" (1-2 digit hour); minute-of-day or -1 */
@@ -307,6 +349,16 @@ static void run_track(void)
 		t.raw = 1;
 	}
 	t.clr = (sys3(SYS_ioctl, 1, TCGETS, (long)probe) == 0);
+	t.outfd = 1;
+
+	{       /* save file name: "timekeep-" + decimal epoch + ".txt" */
+		char d[12], *q = putdec(d + 12, (unsigned)sys1(SYS_time, 0));
+		char *p = puts_(t.path, "timekeep-");
+		while (q < d + 12) *p++ = *q++;
+		p = puts_(p, ".txt");
+		*p = 0;
+		t.pathlen = p - t.path;
+	}
 
 	fd = sys3(SYS_open, (long)"/etc/localtime", 0 /*O_RDONLY*/, 0);
 	if (fd >= 0) {
@@ -330,6 +382,14 @@ static void run_track(void)
 			break;
 		case 'e':
 			if (t.n) edit_last(&t);
+			break;
+		case 's':
+			if (t.n) {
+				save(&t);
+			} else {
+				char *p = puts_(t.msg, "nothing to save");
+				t.msglen = p - t.msg;
+			}
 			break;
 		case 'q': case 3: case 4:
 			quit(&t);
