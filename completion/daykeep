@@ -1,0 +1,36 @@
+# bash completion for daykeep                               -*- shell-script -*-
+#
+# Copyright (C) 2026 Tacio Medeiros
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.  This file is offered as-is,
+# without any warranty.
+
+_daykeep()
+{
+	local cur prev words cword split
+	_init_completion -s || return
+
+	case $prev in
+	-f | --file | -a | --append)
+		_filedir
+		return
+		;;
+	--format)
+		COMPREPLY=($(compgen -W 'decimal hm minutes' -- "$cur"))
+		return
+		;;
+	--help | --version)
+		return
+		;;
+	esac
+	$split && return
+
+	if [[ $cur == -* ]]; then
+		COMPREPLY=($(compgen -W '--file= --summarize --format= --hm --now
+			--convert --track --append= --utc --help --version' -- "$cur"))
+		[[ ${COMPREPLY-} == *= ]] && compopt -o nospace
+	fi
+} &&
+	complete -F _daykeep daykeep

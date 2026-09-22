@@ -1,0 +1,48 @@
+[NAME]
+daykeep \- sum and track time in decimal days
+
+[EXAMPLES]
+.nf
+.RB "$ " "daykeep .9 \- .1"
+\&.2000
+.RB "$ " "daykeep \-\-hm '09:00 \- 10:30' 11:00 \- 11:45"
+1h 30m
+2h 15m
+.RB "$ " "daykeep \-s \-\-format=minutes \-f today.log"
+135
+.RB "$ " "daykeep \-\-now"
+14301.4564
+.RB "$ " "daykeep \-\-convert .5 +9 10:00"
+2026\-09\-22 09:00:00 \-0300
+2026\-09\-29 21:00:00 \-0300
+14301.5417
+.RB "$ " "daykeep \-t \-a work.log"
+.fi
+.PP
+The last one tracks time interactively and keeps the entries in
+.IR work.log ,
+which
+.B "daykeep \-f work.log"
+sums.
+
+[ENVIRONMENT]
+.TP
+.B TZ
+The time zone for HH:MM input and for dates and times printed by
+.BR \-\-convert ,
+unless
+.B \-u
+is given.
+.TP
+.B POSIXLY_CORRECT
+If set, options must come before the operands.
+.TP
+.B DAYKEEP_NOW
+If set, used as the current time instead of the clock: a full stamp such as
+.B 14301.4564
+or
+.BI @ SECONDS
+since the Unix epoch.  It is meant for tests.
+
+[SEE ALSO]
+.BR date (1)

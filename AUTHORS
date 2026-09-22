@@ -1,0 +1,5 @@
+Authors of timekeep and daykeep.
+
+Tacio Medeiros <taciofvmed@gmail.com>
+	Everything: timekeep.s, timekeep.c, the formal verification in
+	verify/, and daykeep (src/, tests/, doc/, completion/).

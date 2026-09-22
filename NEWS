@@ -1,0 +1,36 @@
+daykeep NEWS
+
+* Noteworthy changes in release 0.1 (unreleased)
+
+** New program
+
+  daykeep works in decimal time: a day number plus a fraction of a day,
+  counted from day 0 = 1987-07-28 00:00 UTC.  90 minutes is .0625.
+
+  It sums START - END ranges from the operands, from -f FILE or from
+  standard input, printing the running total as a decimal (the default),
+  as hours and minutes (--hm) or as minutes (--format=minutes).
+
+  A stamp may leave out digits.  Missing right digits are zeros, and
+  missing left digits are completed to the most recent matching day (or
+  the next one with a leading '+').  An END is completed from its START.
+  HH:MM is read as local time, so old timekeep logs still sum.
+
+  --now prints the current stamp, and --convert turns stamps into local
+  dates and times and back.
+
+  --track is an interactive tracker.  With -a LOG it keeps the session's
+  entries in LOG, one range per line, so -f LOG reads them back.
+
+** Packaging
+
+  A man page (generated with help2man), a Texinfo manual that explains
+  the calendar and the epoch, and bash completion.  'make dist' builds
+  a tarball, and 'make distcheck' builds, tests, installs and uninstalls
+  it.
+
+** Changes in timekeep
+
+  timekeep is now a sum-only study program: the tracker mode moved to
+  daykeep.  The hand-built ELF shrank from 2692 to 434 bytes and is still
+  formally verified.

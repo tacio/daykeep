@@ -2,6 +2,22 @@
 # usage: tests/daykeep-core.sh ./daykeep  -- time library and CLI skeleton
 # The clock is pinned with DAYKEEP_NOW and the zone with a POSIX TZ string,
 # so the results don't depend on the machine's clock or tzdata.
+#
+# Copyright (C) 2026 Tacio Medeiros
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 bin=${1:-./daykeep}
 fail=0
 

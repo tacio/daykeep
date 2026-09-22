@@ -1,9 +1,15 @@
 # build outputs (make)
-timekeep
-timekeep-c
-daykeep
+/timekeep
+/timekeep-c
+/daykeep
 *.o
 
 # verification environment
 verify/.venv/
 __pycache__/
+
+# generated docs (shipped in the tarball) and tarballs (make dist)
+doc/daykeep.1
+doc/daykeep.info
+doc/version.texi
+daykeep-*.tar.gz

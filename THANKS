@@ -1,0 +1,6 @@
+These projects made timekeep and daykeep easier to build and check:
+
+  angr and Z3        symbolic execution and the solver behind verify/
+  GNU help2man       generates the daykeep man page from --help
+  GNU Texinfo        the daykeep manual
+  GNU coreutils      date(1), the test oracle for clock conversions

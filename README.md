@@ -33,7 +33,7 @@ $ timekeep "$(cat today.log)"      # one range per line
 - An entry can span several arguments, so `timekeep 10:00 - 11:00` works.
 - With no arguments there is nothing to sum, so it prints nothing and exits 0.
 
-## daykeep (work in progress)
+## daykeep
 
 `daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
 time: a day number plus a fraction of a day, counted from day 0 =
@@ -57,7 +57,8 @@ $ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
 14301.5417
 ```
 
-See `daykeep --help` for the digit-completion rules.
+See `daykeep --help` for the digit-completion rules, `man daykeep`, or
+`info daykeep` for the full manual (the calendar, the epoch, the units).
 
 ### Tracker
 
@@ -86,16 +87,25 @@ total .0625
 
 ## Building
 
-Requires GNU `as`, `objcopy`, and gcc (glibc for daykeep).
+Requires GNU `as`, `objcopy`, and gcc (glibc for daykeep). In a git
+checkout, the daykeep docs also need `help2man` and `makeinfo` (Texinfo);
+the release tarball ships them already built.
 
 ```sh
 make            # builds timekeep, timekeep-c and daykeep
 make size       # byte counts
 make test       # timekeep test suite against both binaries
 make check      # make test plus the daykeep tests
-make install    # daykeep into $(prefix)/bin (prefix, bindir, DESTDIR honored)
-make clean
+make doc        # daykeep man page (doc/daykeep.1) and manual (doc/daykeep.info)
+make install    # daykeep, its man page, manual and bash completion
+make uninstall
+make dist       # daykeep-VERSION.tar.gz
+make distcheck  # build, check, install and uninstall that tarball
+make clean      # maintainer-clean also removes the generated docs
 ```
+
+`make install` honors `prefix`, `bindir`, `mandir`, `infodir`,
+`bashcompdir` and `DESTDIR`. `make install-strip` strips the binary.
 
 ## Tests
 
@@ -118,6 +128,13 @@ cap with `make verify VERIFY_MEM=8G`.
 
 See [`verify/README.md`](verify/README.md) for what is proved and what is not.
 
+## License
+
+GPLv3 or later; see [`COPYING`](COPYING). The manual, the Makefile and the
+bash completion are under an all-permissive license (see each file).
+[`NEWS`](NEWS) lists user-visible changes, [`AUTHORS`](AUTHORS) and
+[`THANKS`](THANKS) the people and projects involved.
+
 ## Layout
 
 ```
@@ -134,6 +151,12 @@ tests/
   daykeep-core.sh daykeep tests (clock pinned via DAYKEEP_NOW)
   daykeep-sum.sh  daykeep sum mode, cross-checked against ./timekeep
   daykeep-track.sh the tracker, driven over a pipe
+  distcheck.sh    checks a release tarball (make distcheck)
+doc/
+  daykeep.texi    the daykeep manual (Texinfo)
+  daykeep.h2m     extra man page sections for help2man
+completion/
+  daykeep         bash completion
 verify/
   spec.py         trusted functional spec (Z3 formulas + Python mirrors)
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)
