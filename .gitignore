@@ -1,6 +1,7 @@
 # build outputs (make)
 timekeep
 timekeep-c
+daykeep
 *.o
 
 # verification environment

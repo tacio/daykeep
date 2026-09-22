@@ -33,14 +33,35 @@ $ timekeep "$(cat today.log)"      # one range per line
 - An entry can span several arguments, so `timekeep 10:00 - 11:00` works.
 - With no arguments there is nothing to sum, so it prints nothing and exits 0.
 
+## daykeep (work in progress)
+
+`daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
+time: a day number plus a fraction of a day, counted from day 0 =
+1987-07-28 00:00 UTC. 90 minutes is `.0625`. So far it only does `--now` and
+`--convert`. Summing ranges and the tracker are still to come.
+
+```console
+$ daykeep --now
+14301.4564
+$ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
+2026-09-22 09:00:00 -0300
+2026-09-19 21:00:00 -0300
+2026-09-29 21:00:00 -0300
+14301.5417
+```
+
+See `daykeep --help` for the digit-completion rules.
+
 ## Building
 
-Requires GNU `as`, `objcopy`, and gcc for the C reference.
+Requires GNU `as`, `objcopy`, and gcc (glibc for daykeep).
 
 ```sh
-make            # builds timekeep and timekeep-c
-make size       # byte counts of both
-make test       # runs the test suite against both binaries
+make            # builds timekeep, timekeep-c and daykeep
+make size       # byte counts
+make test       # timekeep test suite against both binaries
+make check      # make test plus the daykeep tests
+make install    # daykeep into $(prefix)/bin (prefix, bindir, DESTDIR honored)
 make clean
 ```
 
@@ -71,7 +92,12 @@ See [`verify/README.md`](verify/README.md) for what is proved and what is not.
 timekeep.s        hand-built ELF (headers included), the shipped program
 timekeep.c        freestanding C reference
 Makefile
-test.sh           tests
+test.sh           timekeep tests
+src/
+  dktime.[ch]     decimal-time library (parse, complete, format)
+  daykeep.c       daykeep command line
+tests/
+  daykeep-core.sh daykeep tests (clock pinned via DAYKEEP_NOW)
 verify/
   spec.py         trusted functional spec (Z3 formulas + Python mirrors)
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)
