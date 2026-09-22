@@ -2,9 +2,9 @@
  *
  * Times are day numbers plus fractions of a day since 1987-07-28 00:00 UTC;
  * see dktime.h.  This file is the command line: summing ranges, --now and
- * --convert.  The tracker comes later.
+ * --convert.  The tracker is in track.c.
  */
-#include "dktime.h"
+#include "daykeep.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -15,15 +15,11 @@
 #include <time.h>
 #include <unistd.h>
 
-#define PROGRAM "daykeep"
 #define VERSION "0.1"
-
-/* exit statuses */
-enum { EXIT_OK = 0, EXIT_BADINPUT = 1, EXIT_TROUBLE = 2 };
 
 static int utc;                 /* -u: HH:MM and clock output in UTC */
 static int summarize;           /* -s: print only the final total */
-static enum { FMT_DECIMAL, FMT_HM, FMT_MINUTES } format = FMT_DECIMAL;
+static enum dk_format format = FMT_DECIMAL;
 static int status = EXIT_OK;    /* worst exit status so far */
 
 static void set_status(int st)
@@ -42,7 +38,8 @@ static void usage(void)
 {
 	printf("Usage: %s [OPTION]... [RANGE]...\n"
 	       "  or:  %s [OPTION]... --now\n"
-	       "  or:  %s [OPTION]... --convert VALUE...\n", PROGRAM, PROGRAM, PROGRAM);
+	       "  or:  %s [OPTION]... --convert VALUE...\n"
+	       "  or:  %s [OPTION]... --track\n", PROGRAM, PROGRAM, PROGRAM, PROGRAM);
 	fputs("Work with decimal time: day numbers and fractions of a day counted\n"
 	      "from day 0 = 1987-07-28 00:00 UTC.  One step of the 4th decimal\n"
 	      "place is 8.64 seconds; 90 minutes is .0625.\n"
@@ -61,6 +58,10 @@ static void usage(void)
 	      "  -c, --convert      convert each VALUE: a decimal stamp becomes a\n"
 	      "                       local date and time; HH:MM or an ISO date\n"
 	      "                       (YYYY-MM-DD[ HH:MM[:SS]][ +HHMM]) becomes a stamp\n"
+	      "  -t, --track        track time interactively: Enter stamps the time,\n"
+	      "                       starting and ending entries in turn\n"
+	      "  -a, --append=LOG   with --track, keep the entries in LOG, one range\n"
+	      "                       per line; an open entry at its end is resumed\n"
 	      "  -u, --utc          read and print wall-clock times in UTC\n"
 	      "      --help         display this help and exit\n"
 	      "      --version      output version information and exit\n"
@@ -74,6 +75,12 @@ static void usage(void)
 	      "An END that leaves out digits is completed from START instead: it is\n"
 	      "the first matching time not before START, so .9 - .1 lasts .2000 and\n"
 	      "23:00 - 01:00 lasts two hours.\n"
+	      "\n"
+	      "In the tracker, Enter stamps the time, x removes the last stamp, e\n"
+	      "edits it, s saves the log and q quits.  An edited stamp takes any\n"
+	      "form above and is completed like an END, from the stamp before it.\n"
+	      "The log is rewritten after every change, so it is always current,\n"
+	      "and -f LOG reads it back.\n"
 	      "\n"
 	      "Exit status is 0 if all went well, 1 if some input was invalid, and\n"
 	      "2 for usage or I/O errors.\n", stdout);
@@ -90,7 +97,7 @@ static void version(void)
 
 /* The current time.  DAYKEEP_NOW overrides the clock for tests: either a
  * full decimal stamp or @UNIX_SECONDS. */
-static dk_secs now(void)
+dk_secs clock_now(void)
 {
 	const char *env = getenv("DAYKEEP_NOW");
 	dk_secs s;
@@ -166,15 +173,20 @@ static void bad_input(const struct src *src, const char *fmt, ...)
 	set_status(EXIT_BADINPUT);
 }
 
-static void print_dur(dk_secs d)
+void fmt_dur(char *buf, dk_secs d, enum dk_format fmt)
 {
-	char buf[DK_BUFSZ];
-
-	switch (format) {
+	switch (fmt) {
 	case FMT_DECIMAL: dk_fmt_dur(buf, d); break;
 	case FMT_HM:      dk_fmt_hm(buf, d); break;
 	case FMT_MINUTES: dk_fmt_minutes(buf, d); break;
 	}
+}
+
+static void print_dur(dk_secs d)
+{
+	char buf[DK_BUFSZ];
+
+	fmt_dur(buf, d, format);
 	puts(buf);
 }
 
@@ -321,8 +333,14 @@ static void sum_file(const char *name, dk_secs t_now)
 /* flush stdout and report any write error, as GNU close_stdout does */
 static void close_stdout(void)
 {
+	int earlier = ferror(stdout);   /* a failed fflush already dropped its data */
+
 	if (fclose(stdout) != 0) {
 		fprintf(stderr, "%s: write error: %s\n", PROGRAM, strerror(errno));
+		_exit(EXIT_TROUBLE);
+	}
+	if (earlier) {
+		fprintf(stderr, "%s: write error\n", PROGRAM);
 		_exit(EXIT_TROUBLE);
 	}
 }
@@ -336,6 +354,8 @@ static const struct option longopts[] = {
 	{ "hm",        no_argument,       NULL, OPT_HM },
 	{ "now",       no_argument,       NULL, OPT_NOW },
 	{ "convert",   no_argument,       NULL, 'c' },
+	{ "track",     no_argument,       NULL, 't' },
+	{ "append",    required_argument, NULL, 'a' },
 	{ "utc",       no_argument,       NULL, 'u' },
 	{ "help",      no_argument,       NULL, OPT_HELP },
 	{ "version",   no_argument,       NULL, OPT_VERSION },
@@ -344,7 +364,8 @@ static const struct option longopts[] = {
 
 int main(int argc, char **argv)
 {
-	enum { MODE_NONE, MODE_NOW, MODE_CONVERT } mode = MODE_NONE;
+	enum { MODE_NONE, MODE_NOW, MODE_CONVERT, MODE_TRACK } mode = MODE_NONE;
+	const char *log = NULL;
 	char buf[DK_BUFSZ];
 	dk_secs t_now;
 	int c, i;
@@ -354,15 +375,20 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%s: %s\n", PROGRAM, strerror(errno));
 		return EXIT_TROUBLE;
 	}
-	while ((c = getopt_long(argc, argv, "cf:su", longopts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "a:cf:stu", longopts, NULL)) != -1) {
 		switch (c) {
 		case OPT_NOW:
 		case 'c':
+		case 't':
 			if (mode != MODE_NONE) {
-				fprintf(stderr, "%s: --now and --convert are exclusive\n", PROGRAM);
+				fprintf(stderr, "%s: --now, --convert and --track are exclusive\n",
+				        PROGRAM);
 				try_help();
 			}
-			mode = (c == 'c') ? MODE_CONVERT : MODE_NOW;
+			mode = c == 'c' ? MODE_CONVERT : c == 't' ? MODE_TRACK : MODE_NOW;
+			break;
+		case 'a':
+			log = optarg;
 			break;
 		case 'u':
 			utc = 1;
@@ -405,13 +431,20 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%s: -f works only when summing ranges\n", PROGRAM);
 		try_help();
 	}
-	t_now = now();
+	if (log && mode != MODE_TRACK) {
+		fprintf(stderr, "%s: -a works only with --track\n", PROGRAM);
+		try_help();
+	}
+	t_now = clock_now();
 	switch (mode) {
+	case MODE_TRACK:
 	case MODE_NOW:
 		if (optind < argc) {
 			fprintf(stderr, "%s: extra operand '%s'\n", PROGRAM, argv[optind]);
 			try_help();
 		}
+		if (mode == MODE_TRACK)
+			return track(log, utc, format);
 		dk_fmt_stamp(buf, t_now);
 		puts(buf);
 		break;

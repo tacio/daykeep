@@ -37,8 +37,8 @@ $ timekeep "$(cat today.log)"      # one range per line
 
 `daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
 time: a day number plus a fraction of a day, counted from day 0 =
-1987-07-28 00:00 UTC. 90 minutes is `.0625`. It sums ranges and does `--now`
-and `--convert`. The interactive tracker is still to come.
+1987-07-28 00:00 UTC. 90 minutes is `.0625`. It sums ranges, tracks time
+interactively, and does `--now` and `--convert`.
 
 ```console
 $ daykeep .9 - .1                      # an END is completed from its START
@@ -58,6 +58,31 @@ $ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
 ```
 
 See `daykeep --help` for the digit-completion rules.
+
+### Tracker
+
+`daykeep --track` (`-t`) is the interactive tracker:
+
+```console
+$ daykeep -t -a work.log
+ 1  14301.3750 - 14301.4375   .0625
+ 2  14301.4564 - ...          (running)
+total .0625
+[enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit
+```
+
+- Enter stamps the current time. Stamps start and end entries in turn.
+- `e` edits the last stamp. It takes any stamp form (`.4`, `14:30`,
+  `14301.4`), completed from the stamp before it, so `.9` then `.1` ends the
+  next day.
+- `x` removes the last stamp. `q`, `^C`, `^D` or end of input quit.
+- With `-a LOG`, the session's entries go to LOG as `START - END` lines
+  (`START -` while open). LOG is rewritten after every change, so a signal
+  or crash loses nothing, and `daykeep -f LOG` sums it. Older lines are never
+  touched. If LOG ends in an open entry, the next `-t -a LOG` resumes it. Only
+  one tracker at a time can use a LOG.
+- Without `-a`, nothing is written to disk.
+- `--hm`/`--format` and `-u` apply as in sum mode.
 
 ## Building
 
@@ -102,10 +127,13 @@ Makefile
 test.sh           timekeep tests
 src/
   dktime.[ch]     decimal-time library (parse, complete, format)
+  daykeep.h       what the command line and the tracker share
   daykeep.c       daykeep command line
+  track.c         the interactive tracker (--track)
 tests/
   daykeep-core.sh daykeep tests (clock pinned via DAYKEEP_NOW)
   daykeep-sum.sh  daykeep sum mode, cross-checked against ./timekeep
+  daykeep-track.sh the tracker, driven over a pipe
 verify/
   spec.py         trusted functional spec (Z3 formulas + Python mirrors)
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)

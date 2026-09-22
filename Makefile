@@ -14,7 +14,7 @@ INSTALL_DATA    = $(INSTALL) -m 644
 # daykeep: CFLAGS is the user's; warnings and feature macros stay on regardless
 CFLAGS   = -g -O2
 DK_FLAGS = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra
-DK_SRC   = src/daykeep.c src/dktime.c
+DK_SRC   = src/daykeep.c src/dktime.c src/track.c
 
 TK_CFLAGS = -Os -static -nostdlib -fno-stack-protector -fno-asynchronous-unwind-tables \
          -fno-unwind-tables -fno-ident -fno-pie -no-pie -ffunction-sections \
@@ -34,7 +34,7 @@ timekeep-c: timekeep.c
 	$(CC) $(TK_CFLAGS) $(TK_LDFLAGS) -o $@ $<
 	strip -s -R .comment -R '.note*' -R '.eh_frame*' $@
 
-daykeep: $(DK_SRC) src/dktime.h
+daykeep: $(DK_SRC) src/dktime.h src/daykeep.h
 	$(CC) $(DK_FLAGS) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $(DK_SRC)
 
 size: all
@@ -46,6 +46,7 @@ test: timekeep timekeep-c
 check: test daykeep
 	@tests/daykeep-core.sh ./daykeep
 	@tests/daykeep-sum.sh ./daykeep ./timekeep
+	@tests/daykeep-track.sh ./daykeep
 
 install: daykeep
 	$(INSTALL) -d $(DESTDIR)$(bindir)
