@@ -37,10 +37,17 @@ $ timekeep "$(cat today.log)"      # one range per line
 
 `daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
 time: a day number plus a fraction of a day, counted from day 0 =
-1987-07-28 00:00 UTC. 90 minutes is `.0625`. So far it only does `--now` and
-`--convert`. Summing ranges and the tracker are still to come.
+1987-07-28 00:00 UTC. 90 minutes is `.0625`. It sums ranges and does `--now`
+and `--convert`. The interactive tracker is still to come.
 
 ```console
+$ daykeep .9 - .1                      # an END is completed from its START
+.2000
+$ daykeep --hm '09:00 - 10:30' 11:00 - 11:45    # old timekeep input works
+1h 30m
+2h 15m
+$ daykeep -s --format=minutes -f today.log      # -f FILE, else stdin
+135
 $ daykeep --now
 14301.4564
 $ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
@@ -98,6 +105,7 @@ src/
   daykeep.c       daykeep command line
 tests/
   daykeep-core.sh daykeep tests (clock pinned via DAYKEEP_NOW)
+  daykeep-sum.sh  daykeep sum mode, cross-checked against ./timekeep
 verify/
   spec.py         trusted functional spec (Z3 formulas + Python mirrors)
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)

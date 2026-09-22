@@ -37,6 +37,13 @@ long long dk_complete_day(long long typed, int ndigits, long long ref, int forwa
  * Returns 0 and sets *OUT, or -1 if S is not a stamp. */
 int dk_parse_stamp(const char *s, dk_secs now, int utc, dk_secs *out);
 
+/* Parse the END of a range whose START is known.  Missing left digits are
+ * completed forward from START's day, and a time that would fall before
+ * START moves on to the next matching day, so ".9 - .1" lasts .2000 and
+ * "23:00 - 01:00" two hours.  Returns 0, -1 if S is not a stamp, or -2 if S
+ * has a full day number and is still before START. */
+int dk_parse_end(const char *s, dk_secs start, int utc, dk_secs *out);
+
 /* Parse a full decimal stamp with no completion ("14301.4564"). */
 int dk_parse_literal(const char *s, dk_secs *out);
 

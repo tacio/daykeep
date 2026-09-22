@@ -134,24 +134,62 @@ static int to_tm(dk_secs s, int utc, struct tm *tm)
 	return (utc ? gmtime_r(&t, tm) : localtime_r(&t, tm)) ? 0 : -1;
 }
 
+/* wall-clock H:M:S on the local (or UTC) date of REF, plus DAYS days */
+static int clock_on(dk_secs ref, int days, int h, int m, int sec, int utc, dk_secs *out)
+{
+	struct tm tm;
+
+	if (to_tm(ref, utc, &tm))
+		return -1;
+	tm.tm_mday += days;
+	tm.tm_hour = h;
+	tm.tm_min = m;
+	tm.tm_sec = sec;
+	return from_tm(&tm, utc, out);
+}
+
+/* S is a whole H[H]:MM[:SS] */
+static int is_clock(const char *s, int *h, int *m, int *sec)
+{
+	const char *end = parse_clock(s, h, m, sec);
+	return end && *end == '\0';
+}
+
 int dk_parse_stamp(const char *s, dk_secs now, int utc, dk_secs *out)
 {
 	struct decimal d;
-	struct tm tm;
 	int h, m, sec;
-	const char *end;
 
-	if ((end = parse_clock(s, &h, &m, &sec)) && *end == '\0') {
-		if (to_tm(now, utc, &tm))
-			return -1;
-		tm.tm_hour = h;
-		tm.tm_min = m;
-		tm.tm_sec = sec;
-		return from_tm(&tm, utc, out);
-	}
+	if (is_clock(s, &h, &m, &sec))
+		return clock_on(now, 0, h, m, sec, utc, out);
 	if (parse_decimal(s, &d))
 		return -1;
 	*out = dk_complete_day(d.day, d.ndig, dk_day(now), d.plus) * DK_DAY + d.frac;
+	return 0;
+}
+
+int dk_parse_end(const char *s, dk_secs start, int utc, dk_secs *out)
+{
+	struct decimal d;
+	long long ref = dk_day(start);
+	int h, m, sec, literal;
+
+	if (is_clock(s, &h, &m, &sec)) {
+		if (clock_on(start, 0, h, m, sec, utc, out))
+			return -1;
+		if (*out < start && clock_on(start, 1, h, m, sec, utc, out))
+			return -1;
+		return 0;
+	}
+	if (parse_decimal(s, &d))
+		return -1;
+	literal = d.ndig > 0 && (ref < 0 || d.ndig >= ndigits(ref));
+	*out = dk_complete_day(d.day, d.ndig, ref, 1) * DK_DAY + d.frac;
+	if (*out < start) {
+		if (literal)
+			return -2;
+		*out = dk_complete_day(d.day, d.ndig, ref + 1, 1) * DK_DAY + d.frac;
+	}
 	return 0;
 }
 

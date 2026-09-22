@@ -45,6 +45,7 @@ test: timekeep timekeep-c
 
 check: test daykeep
 	@tests/daykeep-core.sh ./daykeep
+	@tests/daykeep-sum.sh ./daykeep ./timekeep
 
 install: daykeep
 	$(INSTALL) -d $(DESTDIR)$(bindir)

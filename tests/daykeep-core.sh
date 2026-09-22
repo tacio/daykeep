@@ -101,12 +101,11 @@ status bad-plus-plus   1 -c ++9
 status bad-dot         1 -c .
 status bad-empty       1 -c ''
 status bad-long-day    1 -c 1234567890
-status no-args         2
 status bad-option      2 --bogus
 status now-and-convert 2 --now -c
 status now-operand     2 --now 9
 status convert-empty   2 -c
-status sum-not-yet     2 .25 - .5
+status file-with-now   2 --now -f x
 DAYKEEP_NOW=garbage status bad-now-env 2 --now
 status help            0 --help
 status version         0 --version
@@ -114,7 +113,7 @@ status version         0 --version
 # getopt permutation: options after operands, and -- ending them
 check permute      "$(day 14299)" 9 -c
 check dashdash     14301.4167 -c -u -- 10:00
-POSIXLY_CORRECT=1 status posixly-correct 2 9 -c
+POSIXLY_CORRECT=1 status posixly-correct 1 9 -c    # -c is range text then
 
 # write errors on stdout are reported
 if [ -w /dev/full ]; then
