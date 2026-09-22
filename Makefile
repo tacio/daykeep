@@ -1,4 +1,4 @@
-# timekeep (hand-built ELF, smallest) and timekeep-c (freestanding C reference)
+# timekeep (hand-built ELF, sum mode) and timekeep-c (freestanding C reference)
 CFLAGS = -Os -static -nostdlib -fno-stack-protector -fno-asynchronous-unwind-tables \
          -fno-unwind-tables -fno-ident -fno-pie -no-pie -ffunction-sections \
          -fdata-sections -fcf-protection=none -mno-red-zone -Wall -Wextra
@@ -22,7 +22,6 @@ size: all
 
 test: all
 	@./test.sh ./timekeep && ./test.sh ./timekeep-c
-	@./test-track.sh ./timekeep && ./test-track.sh ./timekeep-c
 
 # formal proof over the shipped bytes (needs a one-time: make verify-setup)
 # memory-capped in its own scope so a runaway exploration can't OOM the terminal

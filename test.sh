@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: test.sh ./binary  -- sum mode: entries come from argv, totals to stdout
+# usage: test.sh ./binary  -- entries come from argv, totals to stdout
 bin=${1:-./timekeep}
 fail=0
 
@@ -25,5 +25,9 @@ check split-words $'1h 30m\n2h 15m'  09:00 - 10:30 11:00 - 11:45
 check split-pair  $'1h 0m\n1h 30m'   '10:00-11:00' '12:00-12:30'
 # a partial entry at the end of one arg continues into the next
 check across-args '1h 0m'            '10:00 -' '11:00'
+
+# no arguments: nothing to sum, silent exit 0
+got=$("$bin"); rc=$?
+if [ -z "$got" ] && [ $rc -eq 0 ]; then echo "ok   no-args"; else echo "FAIL no-args: got [$got] rc=$rc"; fail=1; fi
 
 exit $fail

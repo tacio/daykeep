@@ -20,12 +20,6 @@ def fmt_hm_py(t):
     return f"{t // 60}h {t % 60}m"
 
 
-# --- HH:MM (zero-padded, 2-digit) ---------------------------------------
-def hm_py(m):
-    m &= 0xFFFF
-    return f"{m // 60:02d}:{m % 60:02d}"
-
-
 # --- entry duration with midnight wrap ----------------------------------
 def duration_py(start, end):
     d = (end - start) % 1440
@@ -36,45 +30,6 @@ def duration_z3(start, end):
     """start,end : BitVec32 assumed in [0,1440).  Result in [0,1440)."""
     d = end - start
     return z3.If(z3.Or(d >= 1440, d < 0), d + 1440, d)  # single wrap suffices for the domain
-
-
-# --- local minute-of-day -------------------------------------------------
-def minute_of_day_py(secs):
-    s = secs % 86400
-    return s // 60
-
-
-def minute_of_day_z3(secs):
-    """secs : BitVec64 (signed local seconds).  Result BitVec64 in [0,1440)."""
-    s = z3.SRem(secs, z3.BitVecVal(86400, 64))
-    s = z3.If(s < 0, s + 86400, s)
-    return z3.UDiv(s, z3.BitVecVal(60, 64))
-
-
-# --- HH:MM validator (matches ^([01]?[0-9]|2[0-3]):([0-5][0-9])$) --------
-def parse_hm_py(s):
-    """s : bytes/str of the typed characters.  Returns minute-of-day or -1."""
-    b = s if isinstance(s, (bytes, bytearray)) else s.encode()
-    n = len(b)
-    if n < 4 or n > 5:
-        return -1
-    hd = 1 if b[1:2] == b":" else 2
-    if n != hd + 3 or b[hd] != ord(":"):
-        return -1
-    hh = 0
-    for i in range(hd):
-        c = b[i]
-        if c < ord("0") or c > ord("9"):
-            return -1
-        hh = hh * 10 + (c - ord("0"))
-    if hh > 23:
-        return -1
-    c1, c2 = b[hd + 1], b[hd + 2]
-    if c1 < ord("0") or c1 > ord("5"):
-        return -1
-    if c2 < ord("0") or c2 > ord("9"):
-        return -1
-    return hh * 60 + (c1 - ord("0")) * 10 + (c2 - ord("0"))
 
 
 # --- streaming range parser (sum mode) ----------------------------------
@@ -127,34 +82,3 @@ def sum_mode_py(args):
             p.byte(ch)
         p.byte(ord(" "))       # the NUL between arguments separates
     return p.out
-
-
-# --- TZif v1 offset lookup ----------------------------------------------
-def be32(b, o):
-    return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]
-
-
-def tz_offset_py(tz, now):
-    n = len(tz)
-    if n < 44 or tz[0:4] != b"TZif":
-        return 0
-    timecnt = be32(tz, 32)
-    typecnt = be32(tz, 36)
-    if typecnt == 0:
-        return 0
-    base = 44 + 5 * timecnt + 6 * typecnt
-    if base > n:
-        return 0
-    idx = 0
-    for i in range(timecnt):
-        t = be32(tz, 44 + 4 * i)
-        if t >= 2**31:
-            t -= 2**32
-        if t <= now:
-            idx = tz[44 + 4 * timecnt + i]
-        else:
-            break
-    if idx >= typecnt:
-        return 0
-    off = be32(tz, 44 + 5 * timecnt + 6 * idx)
-    return off - 2**32 if off >= 2**31 else off
