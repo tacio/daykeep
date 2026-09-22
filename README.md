@@ -72,7 +72,9 @@ total .0625
 [enter] stamp  [x] remove last  [e] edit last  [s] save  [q] quit
 ```
 
-- Enter stamps the current time. Stamps start and end entries in turn.
+- Enter stamps the current time. Stamps start and end entries in turn. If
+  the start was edited into the future, the entry ends at its start instead
+  (then edit the end), so no entry ends before it starts.
 - `e` edits the last stamp. It takes any stamp form (`.4`, `14:30`,
   `14301.4`), completed from the stamp before it, so `.9` then `.1` ends the
   next day.
@@ -111,6 +113,25 @@ make clean      # maintainer-clean also removes the generated docs
 
 `test.sh <bin>` covers wrapping, CRLF, blank lines, entries split across
 arguments, no arguments, and so on.
+
+### Fuzzing
+
+```sh
+make fuzz            # verify/fuzz.py, about 5 seconds (needs verify/.venv)
+make fuzz-asan       # the same against daykeep built with ASan + UBSan
+make fuzz-libfuzzer  # coverage-guided fuzzing of the parsers (needs clang)
+```
+
+`verify/fuzz.py` runs seeded, bounded groups of generated cases. timekeep
+and timekeep-c must agree with `verify/spec.py` on random and mutated argv.
+daykeep sum mode and `--convert` must agree with a Python model built on
+`verify/dkspec.py`, and `--convert` round trips are checked against
+`date(1)` in zones with DST. Garbage input must not crash or hang daykeep.
+Random key streams into `--track -a LOG` must leave a log that reads back
+with `-f`. `FUZZ_ITERS=3000` runs longer, `FUZZ_SEED=n` tries other cases,
+and `make fuzz-libfuzzer FUZZ_RUNS=n` sets the libFuzzer run count. Each
+failure prints a reproducer; bugs it finds become cases in `tests/`. Fuzzing
+is not part of `make check`.
 
 ## Formal verification
 
@@ -170,4 +191,6 @@ verify/
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)
   dkspec.py       daykeep's decimal-time rules (Z3 predicates + mirrors)
   dkprove.py      Z3 theorems over dktime.c, and checks of the compiled C
+  fuzz.py         differential and robustness fuzzing (make fuzz)
+  dk_libfuzzer.c  libFuzzer harness for the parsers (make fuzz-libfuzzer)
 ```

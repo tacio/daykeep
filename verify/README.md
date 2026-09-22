@@ -170,3 +170,29 @@ the digits name, the day before the next midnight, not at START itself.
   `mktime`/`localtime_r`, whose DST handling is libc's. The checks run in UTC.
 - `dk_parse_date`, `dk_fmt_clock` and the command line. The shell tests in
   `tests/` cover them.
+
+# Fuzzing
+
+`fuzz.py` (`make fuzz`, `make fuzz-asan`) and `dk_libfuzzer.c`
+(`make fuzz-libfuzzer`) test rather than prove. They look for inputs where
+the programs disagree with the specs above, crash, hang, or break the
+conventions (exit status, stderr for diagnostics, logs that read back).
+
+| Group | Oracle |
+|---|---|
+| timekeep | `spec.sum_mode_py`, on random entries mutated with digits, separators, CRLF, huge numbers, bytes ≥ 0x80 and empty arguments; `timekeep` and `timekeep-c` must both match |
+| sum | a model of `sum_line` (tokens, `START - END`, open ranges, errors per line, NUL-cut lines) on top of `dkspec`'s parsers and formatters, in fixed-offset zones and `-u`, for operands, split words, `-f` and stdin |
+| convert | the same parsers for `--convert` in fixed zones, and in zones with DST: stamp → clock → stamp is the identity, with `date(1)` checking each clock |
+| garbage | exit status 0, 1 or 2, a message on stderr whenever it is not 0, stdout holding only results, no file written without `--track` |
+| /dev/full | exit 2 and a write error |
+| track | the log keeps earlier sessions' lines, has only `START - END` lines (and one open last line), reads back with `-f`, and holds exactly the entries on the tracker's last screen |
+| libFuzzer | the sanitizers, a range END never before START, and printed stamps reading back as themselves |
+
+Runs are seeded (`FUZZ_SEED`) and bounded (`FUZZ_ITERS`, 300 cases per
+group by default). The generators were tried against planted bugs (an
+unbounded copy of a long stamp into a fixed buffer, a wrong rollover day)
+and caught both.
+
+A failure found this way becomes a regression case in `tests/`. So far:
+Enter with a running entry whose start was edited into the future (the
+`future-end` case in `tests/daykeep-track.sh`).

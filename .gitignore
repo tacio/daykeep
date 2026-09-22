@@ -2,6 +2,8 @@
 /timekeep
 /timekeep-c
 /daykeep
+/daykeep-asan
+/dk-libfuzzer
 *.o
 
 # verification environment

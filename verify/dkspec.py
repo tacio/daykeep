@@ -144,11 +144,12 @@ def complete_py(typed, n, ref, forward):
     return d
 
 
-def parse_stamp_py(s, now):
-    """UTC: HH:MM is on now's day.  -> seconds, or None."""
+def parse_stamp_py(s, now, off=0):
+    """HH:MM is on now's date in a zone OFF seconds east of UTC (fixed, no
+    DST).  -> seconds, or None."""
     c = parse_clock_py(s)
     if c is not None:
-        return now // DAY * DAY + c
+        return (now + off) // DAY * DAY + c - off
     p = parse_decimal_py(s)
     if p is None:
         return None
@@ -156,12 +157,16 @@ def parse_stamp_py(s, now):
     return complete_py(typed, n, now // DAY, plus) * DAY + frac
 
 
-def parse_end_py(s, start):
-    """UTC.  -> seconds, None if not a stamp, or 'before' for a full day
-    number before START.  Searches up to 2 * 10**n days."""
+def parse_end_py(s, start, off=0):
+    """-> seconds, None if not a stamp, or 'before' for a full day number
+    before START.  HH:MM is local time OFF seconds east of UTC: the first
+    such time not before START.  Searches up to 2 * 10**n days."""
     c = parse_clock_py(s)
     if c is not None:
-        n, typed, frac = 0, 0, c
+        d = (start + off) // DAY
+        while d * DAY + c - off < start:
+            d += 1
+        return d * DAY + c - off
     else:
         p = parse_decimal_py(s)
         if p is None:

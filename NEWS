@@ -35,6 +35,19 @@ daykeep NEWS
   completion, range-end rollover and rounding rules over a model of the
   time library, and seeded property checks tie that model to the C.
 
+** Fuzzing
+
+  'make fuzz' runs seeded differential fuzzing of timekeep against its
+  spec and of daykeep against a model of its decimal time, plus garbage
+  input and random tracker sessions.  'make fuzz-asan' does the same with
+  sanitizers, and 'make fuzz-libfuzzer' fuzzes the parsers under clang.
+
+** Bug fixes found by fuzzing
+
+  In --track, pressing Enter while the running entry's start was edited
+  into the future wrote an entry that ended before it started, and the log
+  no longer read back with -f.  The entry now ends at its start.
+
 ** Changes in timekeep
 
   timekeep is now a sum-only study program: the tracker mode moved to

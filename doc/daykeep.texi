@@ -332,7 +332,9 @@ total .0625
 
 @table @asis
 @item @key{RET}
-Stamp the current time.  Stamps start and end entries in turn.
+Stamp the current time.  Stamps start and end entries in turn.  An
+entry whose start was edited into the future ends at its start, so no
+entry ends before it starts; edit the end afterwards.
 @item @kbd{x}
 Remove the last stamp.
 @item @kbd{e}

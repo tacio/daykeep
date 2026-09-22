@@ -85,6 +85,9 @@ check next-start "$(S .9)$(S .95)$(S .05)q" \
 	$' 1  14301.9000 - 14301.9500   .0500\n 2  14302.0500 - ...          (running)\ntotal .0500'
 check first-back "$(S 299.5)q"     $' 1  14299.5000 - ...          (running)\ntotal .0000'
 check plus     "$(S +9.5)q"        $' 1  14309.5000 - ...          (running)\ntotal .0000'
+# found by verify/fuzz.py: Enter must not end an entry before its start
+check future-end "$(S +9.5)\\nq" \
+	$' 1  14309.5000 - 14309.5000   .0000\ntotal .0000\nthe entry starts in the future: ended it at 14309.5000'
 check backspace "\\ne\\x7f\\x7f\\x7f\\x7f3\\nq" \
 	$' 1  14301.3000 - ...          (running)\ntotal .0000'
 check bad-edit "$(S .3)$(S .4)e\\x15x\\nq" \

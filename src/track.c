@@ -343,6 +343,22 @@ static void edit_last(void)
 		snprintf(msg, sizeof msg, "invalid stamp '%s', kept %s", line, kept);
 }
 
+/* Stamp the current time.  An END is never before its START: if the start
+ * was edited into the future, the entry ends where it starts (edit it). */
+static void stamp(void)
+{
+	char a[DK_BUFSZ];
+	dk_secs now = clock_now();
+
+	if (n % 2 && now < stamps[n - 1]) {
+		now = stamps[n - 1];
+		dk_fmt_stamp(a, now);
+		snprintf(msg, sizeof msg, "the entry starts in the future: ended it at %s", a);
+	}
+	push(now);
+	log_write();
+}
+
 static void save(void)
 {
 	if (log_fd < 0) {
@@ -371,8 +387,7 @@ int track(const char *log, int use_utc, enum dk_format fmt)
 		render();
 		switch (c = key()) {
 		case '\n': case '\r':
-			push(clock_now());
-			log_write();
+			stamp();
 			break;
 		case 'x':
 			if (n) {

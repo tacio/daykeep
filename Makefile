@@ -113,7 +113,8 @@ DISTFILES = AUTHORS COPYING NEWS README.md THANKS Makefile \
 	tests/daykeep-core.sh tests/daykeep-sum.sh tests/daykeep-track.sh \
 	tests/distcheck.sh doc/daykeep.texi doc/version.texi doc/daykeep.info \
 	doc/daykeep.h2m doc/daykeep.1 completion/daykeep \
-	verify/README.md verify/spec.py verify/prove.py verify/dkspec.py verify/dkprove.py
+	verify/README.md verify/spec.py verify/prove.py verify/dkspec.py verify/dkprove.py \
+	verify/fuzz.py verify/dk_libfuzzer.c
 
 dist: $(DISTFILES)
 	rm -rf $(distdir)
@@ -145,15 +146,36 @@ verify-setup:
 	uv venv verify/.venv
 	uv pip install -q -p verify/.venv angr z3-solver
 
+# differential and robustness fuzzing (needs verify/.venv); seeded, so
+# reproducible: FUZZ_ITERS=3000 runs longer, FUZZ_SEED=n tries other cases
 fuzz: all
 	verify/.venv/bin/python verify/fuzz.py
 
+# the same, with daykeep built with AddressSanitizer and UBSan
+SAN_FLAGS = -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all \
+	-fno-omit-frame-pointer
+daykeep-asan: $(DK_SRC) src/dktime.h src/daykeep.h
+	$(CC) $(DK_FLAGS) $(SAN_FLAGS) -o $@ $(DK_SRC)
+
+fuzz-asan: timekeep timekeep-c daykeep-asan
+	verify/.venv/bin/python verify/fuzz.py --daykeep ./daykeep-asan
+
+# coverage-guided fuzzing of the time library's parsers (needs clang)
+CLANG = clang
+FUZZ_RUNS = 2000000
+dk-libfuzzer: verify/dk_libfuzzer.c src/dktime.c src/dktime.h
+	$(CLANG) -std=c11 -D_DEFAULT_SOURCE -Isrc $(SAN_FLAGS) -fsanitize=fuzzer \
+		-o $@ verify/dk_libfuzzer.c src/dktime.c
+
+fuzz-libfuzzer: dk-libfuzzer
+	./dk-libfuzzer -runs=$(FUZZ_RUNS) -seed=1
+
 clean:
-	rm -f timekeep timekeep-c daykeep *.o
+	rm -f timekeep timekeep-c daykeep daykeep-asan dk-libfuzzer *.o
 
 # also removes what the tarball ships but a checkout can regenerate
 maintainer-clean: clean
 	rm -f doc/daykeep.1 doc/daykeep.info doc/version.texi $(PACKAGE)-*.tar.gz
 
 .PHONY: all size test check doc info install install-strip uninstall dist distcheck \
-	verify verify-daykeep verify-setup fuzz clean maintainer-clean
+	verify verify-daykeep verify-setup fuzz fuzz-asan fuzz-libfuzzer clean maintainer-clean
