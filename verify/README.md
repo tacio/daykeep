@@ -18,6 +18,8 @@ The results depend on these being correct:
 - The hand-written models used in place of routines that are proved
   separately (for example, `sum_emit` is modelled while `feedb` is checked,
   and `feedb` is modelled while the sum-mode loop is checked).
+- The key-loop facts the track-mode checks start from: `rsp == rbx` (the frame
+  base), `F_OUTFD == 1` and `F_N <= 250`. The key loop itself is not proved.
 - The kernel's process start-up: argc at the initial rsp, then argv[0..argc)
   pointing to NUL-terminated strings, all at or above that rsp.
 
@@ -49,10 +51,64 @@ output region.
 
 ### angr whole-program checks
 
-- **Terminal restore:** with raw mode on, the quit path calls
+- **Terminal restore:** with raw mode on, `track_quit` calls
   `ioctl(TCSETS, saved)` before `exit`. With raw mode off, it calls no ioctl.
-  Both start at `track_quit`, after the save that quitting does. The save
-  itself (`save`, and `render` writing to the file) is not proved.
+  These start at `track_quit`, after the save. The next obligation covers the
+  whole quit path.
+
+### Track mode: saving
+
+Syscalls here return an arbitrary 64-bit value (`SysRet`): the kernel is not
+modelled, so every success and failure branch is explored.
+
+| Obligation | Claim |
+|---|---|
+| file name | From `track_name` to `track_named`, for every `time()` result `t`: `F_PATH` holds `timekeep-` + the decimal digits of `t mod 2^32` + `.txt` and a NUL, and `F_PATHLEN` is its length (14..23, within `F_PATH`'s 32 bytes). Digits are stated by repeated division by 10, and the digit count rules out leading zeros. The only writes are `F_PATH`, `F_PATHLEN` and the stack; the only syscall is `time(NULL)`; rbx and rsp are kept |
+| quit path | From `track_quit_save`, the entry for every quit (`q`, Ctrl-C, Ctrl-D, end of input), with the rest of the frame arbitrary and `F_PATHLEN` in 14..23 (from the file-name obligation). If `F_N != 0`, the events are exactly `open(F_PATH, O_WRONLY\|O_CREAT\|O_TRUNC, 0644)`; then, if it succeeded, `render` with `F_OUTFD` set to that fd and `close(fd)`; then `write(1, F_MSG, 6 or 12 + F_PATHLEN)` and `write(1, "\n", 1)`, with `F_OUTFD` back to 1. Then `ioctl(0, TCSETS, F_TERMIOS)` if and only if `F_RAW != 0`, then `exit(0)`, on every path. Outside `render`, the only writes are `F_MSG`, `F_MSGLEN`, `F_OUTFD` and the stack, so the saved termios and the raw flag reach the restore unchanged |
+
+In the quit-path check, `render` is replaced by `RenderFileModel`: with
+`F_OUTFD != 1` it returns, keeps rbx, rbp, r12, r13 and r15, writes only the
+line buffer `F_LINE` (and the stack below its return slot), makes only writes to
+`F_OUTFD`, and leaves `F_OUTFD` unchanged. The next section proves the real
+`render` does this.
+
+### Render into a save file, by induction over the loop's cut points
+
+`render` has two loops, labelled `render_row` (one row per stamp pair) and
+`render_sum` (the total). Let `R` be its entry rsp, which holds the return
+address. The invariant at both heads is:
+
+- `rbx` is the frame, `rsp == R`, and rbp, r12, r13, r15 are as on entry
+- `F_N <= 250` and `F_OUTFD == fd != 1` in the frame
+- `render_row`: `r14` (zero-extended) `<= F_N + 1`
+- `render_sum`: `r10` (zero-extended) `<= F_N + 1`, `r9` zero-extended, and
+  `rdi` just past `"total "` in `F_LINE`
+
+Every check also bounds memory. Writes stay in `F_LINE[0,128)` and the stack
+below `R`. Reads stay in the frame, the stack and the code image, so `render`
+can't fault on the way to returning.
+
+| Obligation | Claim |
+|---|---|
+| prologue | From `render` with `F_OUTFD != 1`, one path to `render_row` with `r14 == 0`: the screen clear is skipped, no writes, no syscalls |
+| `render_row` step | If `r14 < F_N`: exactly one `write(fd, F_LINE, 1..128)` (the row), then `render_row` with `r14 + 2`. Otherwise `"total "` goes into `F_LINE`, `r9 = r10 = 0`, on to `render_sum` with no syscall |
+| `render_sum` step | If `r10 + 1 < F_N`: `render_sum` with `r10 + 2`, no syscall. Otherwise exactly one `write(fd, F_LINE, 1..128)` (the total), then return with `rsp == R + 8`: the message and prompt are skipped |
+
+Stamp times are arbitrary 16-bit values, not just valid minutes of the day.
+
+**The induction.** A file-mode `render` is the prologue, then `render_row` steps
+while `r14 < F_N` (r14 rises by 2 each time), then `render_sum` steps while
+`r10 + 1 < F_N` (r10 rises by 2), then the return. Each step keeps the
+invariant, and both counters are bounded by `F_N <= 250`, so the run ends. This
+is exactly `RenderFileModel`'s contract. The model's only other effect,
+"`F_OUTFD` unchanged", follows because `F_OUTFD` is outside `F_LINE`.
+
+Each obligation was checked against deliberately broken builds (for example,
+skipping the close, wrong `open` flags, clobbering the saved termios, writing
+the message out of bounds, a wrong or unterminated name), and each break was
+reported as `FAILED`. The render obligations were checked the same way (rows
+written to stdout, the clear or prompt written into the file, a clobbered r12,
+off-by-one loop bounds, a wrong step, the line buffer overrun).
 
 ### Sum mode, by induction over the loop's cut points
 
@@ -92,9 +148,10 @@ line: it comes from `emitdur`, which is checked on sampled values, not all
 32-bit totals.
 
 **Memory.** No check runs more than one loop iteration, so path counts stay in
-the tens. `explore_capped` in `prove.py` fails an obligation if its path or step
-cap is hit instead of pruning paths. A full `make verify` peaks at about
-450 MB of RSS. The earlier bounded whole-program check needed 25–30 GB and was
+the tens (the `render_row` step, the largest, has 46). `explore_capped` in
+`prove.py` fails an obligation if its path or step cap is hit instead of pruning
+paths. A full `make verify` peaks at about 1.5 GB of RSS and takes about 2.5
+minutes. The earlier bounded whole-program check needed 25–30 GB and was
 replaced by these obligations.
 
 The cut-point checks fix concrete stack and buffer addresses. The loop never

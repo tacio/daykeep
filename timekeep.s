@@ -289,6 +289,7 @@ run_track:
 	mov	qword ptr [rbx+F_TZLEN], 0
 	mov	dword ptr [rbx+F_OUTFD], 1
 	# save file name: "timekeep-" + decimal epoch + ".txt" (epoch fits in 32 bits)
+track_name:                             # public labels for the file-name proof
 	xor	edi, edi
 	mov	eax, SYS_time
 	syscall
@@ -305,6 +306,7 @@ run_track:
 	lea	rcx, [rbx+F_PATH+1]     # length without the NUL
 	sub	rdi, rcx
 	mov	[rbx+F_PATHLEN], edi
+track_named:
 	# ioctl(0, TCGETS, termios)
 	xor	edi, edi
 	mov	esi, TCGETS
@@ -418,6 +420,7 @@ run_track:
 	mov	dword ptr [rbx+F_MSGLEN], emptylen
 	jmp	.Lkey
 .Lquit:
+track_quit_save:                        # public label for the quit-path proof
 	cmp	dword ptr [rbx+F_N], 0      # save on the way out, if there is anything
 	je	track_quit
 	call	save
@@ -556,6 +559,7 @@ render:
 	mov	edx, 6
 	call	writestr
 0:	xor	r14d, r14d
+render_row:                             # public cut-point labels for the render proof
 .Lrow:
 	mov	ecx, [rbx+F_N]
 	cmp	r14d, ecx
@@ -615,6 +619,7 @@ render:
 	call	copyn
 	xor	r9d, r9d                # tot
 	xor	r10d, r10d              # j
+render_sum:
 .Ltl:
 	mov	ecx, [rbx+F_N]
 	lea	eax, [r10+1]
