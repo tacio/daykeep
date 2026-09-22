@@ -116,8 +116,16 @@ arguments, no arguments, and so on.
 
 ```sh
 make verify-setup   # one time: creates verify/.venv with angr + z3 (needs uv)
-make verify         # runs verify/prove.py
+make verify         # runs verify/prove.py, then verify/dkprove.py
+make verify-daykeep # only the daykeep part
 ```
+
+`verify/dkprove.py` covers daykeep's decimal time: Z3 proves that a model of
+`src/dktime.c` completes typed digits to the right day, rolls range ends over
+correctly and rounds so every printed stamp reads back as itself, and seeded
+checks of the compiled `dktime.c` (via ctypes) tie that model to the code.
+It takes about 35 seconds; `DK_VERIFY_ITERS` and `DK_VERIFY_SEED` change the
+number of random cases and the seed.
 
 `make verify` runs inside a user systemd scope capped at 12 GB of RAM with
 swap disabled. A normal run peaks at about 420 MB and takes under a minute.
@@ -160,4 +168,6 @@ completion/
 verify/
   spec.py         trusted functional spec (Z3 formulas + Python mirrors)
   prove.py        proof driver (Z3 theorems + angr over the shipped binary)
+  dkspec.py       daykeep's decimal-time rules (Z3 predicates + mirrors)
+  dkprove.py      Z3 theorems over dktime.c, and checks of the compiled C
 ```

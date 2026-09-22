@@ -113,7 +113,7 @@ DISTFILES = AUTHORS COPYING NEWS README.md THANKS Makefile \
 	tests/daykeep-core.sh tests/daykeep-sum.sh tests/daykeep-track.sh \
 	tests/distcheck.sh doc/daykeep.texi doc/version.texi doc/daykeep.info \
 	doc/daykeep.h2m doc/daykeep.1 completion/daykeep \
-	verify/README.md verify/spec.py verify/prove.py
+	verify/README.md verify/spec.py verify/prove.py verify/dkspec.py verify/dkprove.py
 
 dist: $(DISTFILES)
 	rm -rf $(distdir)
@@ -127,12 +127,19 @@ dist: $(DISTFILES)
 distcheck: dist
 	tests/distcheck.sh $(distdir).tar.gz
 
-# formal proof over the shipped bytes (needs a one-time: make verify-setup)
-# memory-capped in its own scope so a runaway exploration can't OOM the terminal
+# formal proof over the shipped bytes, then daykeep's decimal-time rules
+# (needs a one-time: make verify-setup); memory-capped in its own scope so a
+# runaway exploration can't OOM the terminal
 VERIFY_MEM ?= 12G
+VERIFY_RUN = systemd-run --user --scope --quiet -p MemoryMax=$(VERIFY_MEM) \
+	-p MemorySwapMax=0 verify/.venv/bin/python -u
 verify: timekeep
-	systemd-run --user --scope --quiet -p MemoryMax=$(VERIFY_MEM) -p MemorySwapMax=0 \
-		verify/.venv/bin/python -u verify/prove.py
+	$(VERIFY_RUN) verify/prove.py
+	$(VERIFY_RUN) verify/dkprove.py
+
+# just daykeep's (builds its own copy of src/dktime.c)
+verify-daykeep:
+	$(VERIFY_RUN) verify/dkprove.py
 
 verify-setup:
 	uv venv verify/.venv
@@ -149,4 +156,4 @@ maintainer-clean: clean
 	rm -f doc/daykeep.1 doc/daykeep.info doc/version.texi $(PACKAGE)-*.tar.gz
 
 .PHONY: all size test check doc info install install-strip uninstall dist distcheck \
-	verify verify-setup fuzz clean maintainer-clean
+	verify verify-daykeep verify-setup fuzz clean maintainer-clean

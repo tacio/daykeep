@@ -95,3 +95,78 @@ of RSS and takes about 40 seconds.
 
 The cut-point checks fix concrete stack and buffer addresses. The loop never
 compares a pointer with an absolute address, so the choice doesn't matter.
+
+# daykeep: decimal time
+
+`dkprove.py` checks the time library `src/dktime.c` against `dkspec.py`.
+Run it with `make verify` (after the timekeep proofs) or on its own with
+`make verify-daykeep`. It takes about 35 seconds and uses no angr.
+
+## How the claims connect to the code
+
+1. **Z3 theorems over a model.** `dkprove.py` has a class `C` that transcribes
+   the arithmetic of `dktime.c` line by line: C's truncating `/` and `%`,
+   `dk_floor_div`, the `ndigits` loop (unrolled), `dk_complete_day`, the
+   decimal branch of `dk_parse_end`, `ticks`, and the fraction conversion in
+   `parse_decimal`. Every intermediate adds a side condition that it fits in
+   64 bits, so each theorem also shows the code does not overflow. The rules
+   in `dkspec.py` are stated as properties (for example "no later day ≤ ref
+   ends in these digits"), not as the same formula.
+2. **The compiled C against the spec.** `dkprove.py` builds `dktime.c` as a
+   shared library in a temporary directory and calls it through ctypes. It
+   compares the results with the Python mirrors in `dkspec.py`, which work
+   from the definitions (the completion mirrors search day by day). The
+   inputs are seeded random values (`DK_VERIFY_SEED`, `DK_VERIFY_ITERS`,
+   200000 cases by default) plus every second of days -1, 0 and 14301.
+
+Step 2 is sampling, not proof: it is what makes the model in step 1 believable
+as the code. A mutation of either the C or the model (an off-by-one in the
+"full number" test, a wrong rollover day, truncating instead of rounding)
+fails at least one obligation.
+
+## Trusted base
+
+- `dkspec.py`, Z3, and the C compiler.
+- The transcription in class `C` for the theorems, backed by the checks.
+- libc's `snprintf` for the digits of formatted values (the theorems reason
+  about the day and tick numbers it is given; the checks compare the strings).
+
+## Obligations
+
+Domain: seconds `|s| < 2^49` (about 17.8 million years either side of day 0),
+days `|ref| < 2^49 / 86400`, typed day digits `n = 0..9` (dktime reads at most
+9), `0 <= typed < 10^n`, and a time of day `0 <= frac <= 86400` seconds.
+
+### Z3 theorems (hold for every input in the domain)
+
+| Obligation | Claim |
+|---|---|
+| complete, no `+` | With no digits the day is ref. A full day number (at least as many digits as ref, or ref < 0) is literal. Otherwise the result ends in the typed digits, is ≤ ref, and no later day ≤ ref ends in them |
+| complete, `+` | The same, but ≥ ref with no earlier day ≥ ref ending in them |
+| range end | A full day number is literal and is an error (`-2`) exactly when it falls before START. Otherwise the result is on a day ≥ START's day that ends in the typed digits, is not before START, and is the least such day |
+| range end, earliest | When `frac < 86400`, no instant ending in the typed digits with that time of day lies between START and the result |
+| fraction digits | 1–4 typed fraction digits land exactly on the tick they name (`.5` = `.5000`), and any 1–9 digits give a time of day in `[0, 86400]` |
+| ticks | Rounding to 1/10000 day is half-up and does not overflow |
+| ticks, monotone | `s ≤ s'` gives `ticks(s) ≤ ticks(s')`, and one day later is exactly 10000 ticks later |
+| stamp round-trip | For day numbers 0 to 999999999, reading back a printed stamp gives a value that prints the same |
+| stamp round-trip, error | That value is within 4 s of the original |
+
+The "earliest" claim needs `frac < 86400`. Nine fraction digits can round up
+to a full day (`.999999999` is 86400 s), and that END is placed on the day
+the digits name, the day before the next midnight, not at START itself.
+
+### The compiled C (seeded checks)
+
+| Check | Against |
+|---|---|
+| `dk_complete_day` | the day-by-day search, n = 0..4 |
+| `dk_parse_stamp` (UTC) | the grammar, completion from now, `HH:MM[:SS]` on now's day, rejections |
+| `dk_parse_end` (UTC) | the day-by-day search from START's day, literal and `-2` cases, `HH:MM` rollover |
+| `dk_fmt_stamp`, `dk_fmt_dur`, `dk_fmt_hm`, `dk_fmt_minutes` | the Python formatters, plus `dk_parse_literal` round-trips of each stamp |
+
+## Not covered
+
+- Local time. `HH:MM` and `--convert` in a real time zone go through
+  `mktime`/`localtime_r`, whose DST handling is libc's. The checks run in UTC.
+- `dk_parse_date`, `dk_fmt_clock` and the command line. The shell tests in
+  `tests/` cover them.

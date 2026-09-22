@@ -29,6 +29,12 @@ daykeep NEWS
   a tarball, and 'make distcheck' builds, tests, installs and uninstalls
   it.
 
+** Verification
+
+  'make verify' also checks daykeep's decimal time: Z3 proves the digit
+  completion, range-end rollover and rounding rules over a model of the
+  time library, and seeded property checks tie that model to the C.
+
 ** Changes in timekeep
 
   timekeep is now a sum-only study program: the tracker mode moved to
