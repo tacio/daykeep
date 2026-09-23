@@ -100,7 +100,8 @@ compares a pointer with an absolute address, so the choice doesn't matter.
 
 `dkprove.py` checks the time library `src/dktime.c` against `dkspec.py`.
 Run it with `make verify` (after the timekeep proofs) or on its own with
-`make verify-daykeep`. It takes about 35 seconds and uses no angr.
+`make verify-daykeep`. It checks ten representative day lengths and uses
+no angr.
 
 ## How the claims connect to the code
 
@@ -109,7 +110,10 @@ Run it with `make verify` (after the timekeep proofs) or on its own with
    `dk_floor_div`, the `ndigits` loop (unrolled), `dk_complete_day`, the
    decimal branch of `dk_parse_end`, `ticks`, and the fraction conversion in
    `parse_decimal`. Every intermediate adds a side condition that it fits in
-   64 bits, so each theorem also shows the code does not overflow. The rules
+   its declared width (64-bit stored values and fractional parsing,
+   128-bit completion and formatting intermediates), so each theorem also
+   shows the modeled arithmetic does not overflow. Checked narrowing
+   rejects range ends outside signed 64-bit seconds. The rules
    in `dkspec.py` are stated as properties (for example "no later day ≤ ref
    ends in these digits"), not as the same formula.
 2. **The compiled C against the spec.** `dkprove.py` builds `dktime.c` as a
@@ -117,7 +121,10 @@ Run it with `make verify` (after the timekeep proofs) or on its own with
    compares the results with the Python mirrors in `dkspec.py`, which work
    from the definitions (the completion mirrors search day by day). The
    inputs are seeded random values (`DK_VERIFY_SEED`, `DK_VERIFY_ITERS`,
-   200000 cases by default) plus every second of days -1, 0 and 14301.
+   200000 cases per check by default, divided across the ten lengths).
+   Formatting additionally checks signed 64-bit extrema and days -1, 0
+   and 14301: every second for lengths up to 100000, bounded sampling for
+   longer days.
 
 Step 2 is sampling, not proof: it is what makes the model in step 1 believable
 as the code. A mutation of either the C or the model (an off-by-one in the
@@ -133,9 +140,13 @@ fails at least one obligation.
 
 ## Obligations
 
-Domain: seconds `|s| < 2^49` (about 17.8 million years either side of day 0),
-days `|ref| < 2^49 / 86400`, typed day digits `n = 0..9` (dktime reads at most
-9), `0 <= typed < 10^n`, and a time of day `0 <= frac <= 86400` seconds.
+Each theorem runs for day length `L` in `1, 3, 9999, 10000, 10001, 43200,
+86400, 88775, 90000, 1000000000`. These are proofs at the stated lengths,
+not a quantified proof over every accepted length. Domain: seconds
+`|s| < 2^49`, days bounded by that domain divided by `L`, typed day digits
+`n = 0..19`, `0 <= typed < min(10^n, 2^63)`, and `0 <= frac <= L` seconds.
+The rounding and monotonicity proofs cover all signed 64-bit seconds
+(the shifted instant must also fit for the periodicity claim).
 
 ### Z3 theorems (hold for every input in the domain)
 
@@ -143,16 +154,16 @@ days `|ref| < 2^49 / 86400`, typed day digits `n = 0..9` (dktime reads at most
 |---|---|
 | complete, no `+` | With no digits the day is ref. A full day number (at least as many digits as ref, or ref < 0) is literal. Otherwise the result ends in the typed digits, is ≤ ref, and no later day ≤ ref ends in them |
 | complete, `+` | The same, but ≥ ref with no earlier day ≥ ref ending in them |
-| range end | A full day number is literal and is an error (`-2`) exactly when it falls before START. Otherwise the result is on a day ≥ START's day that ends in the typed digits, is not before START, and is the least such day |
-| range end, earliest | When `frac < 86400`, no instant ending in the typed digits with that time of day lies between START and the result |
-| fraction digits | 1–4 typed fraction digits land exactly on the tick they name (`.5` = `.5000`), and any 1–9 digits give a time of day in `[0, 86400]` |
+| range end | Overflow is rejected. For representable values, a full day number is literal and returns `-2` exactly when before START; otherwise the result is the first matching day/time on or after START's day |
+| range end, earliest | When `frac < L`, no instant ending in the typed digits with that time of day lies between START and the result |
+| fraction digits | Padding input with zeros preserves its parsed value; 1–4 digits land on their named tick when `L >= 10000`; any 1–9 digits give a time of day in `[0, L]` |
 | ticks | Rounding to 1/10000 day is half-up and does not overflow |
 | ticks, monotone | `s ≤ s'` gives `ticks(s) ≤ ticks(s')`, and one day later is exactly 10000 ticks later |
-| stamp round-trip | For day numbers 0 to 999999999, reading back a printed stamp gives a value that prints the same |
-| stamp round-trip, error | That value is within 4 s of the original |
+| stamp round-trip | For nonnegative days in the domain whose rounded seconds fit, reading back a printed stamp gives a value that prints the same |
+| stamp round-trip, error | The read-back value differs by at most `floor((L + 10000) / 20000)` seconds (4 s for the default length) |
 
-The "earliest" claim needs `frac < 86400`. Nine fraction digits can round up
-to a full day (`.999999999` is 86400 s), and that END is placed on the day
+The "earliest" claim needs `frac < L`. Nine fraction digits can round up
+to a full day (`.999999999` is 86400 s with the default length), and that END is placed on the day
 the digits name, the day before the next midnight, not at START itself.
 
 ### The compiled C (seeded checks)
@@ -174,7 +185,9 @@ the digits name, the day before the next midnight, not at START itself.
 # Fuzzing
 
 `fuzz.py` (`make fuzz`, `make fuzz-asan`) and `dk_libfuzzer.c`
-(`make fuzz-libfuzzer`) test rather than prove. They look for inputs where
+(`make fuzz-libfuzzer`) test rather than prove. Both vary day length across
+the ten representative values. Civil clock calculations retain 86400-second
+days and the fixed epoch. They look for inputs where
 the programs disagree with the specs above, crash, hang, or break the
 conventions (exit status, stderr for diagnostics, logs that read back).
 

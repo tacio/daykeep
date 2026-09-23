@@ -21,7 +21,7 @@ _daykeep()
 		COMPREPLY=($(compgen -W 'decimal hm minutes' -- "$cur"))
 		return
 		;;
-	--epoch | --help | --version)
+	--epoch | --day-length | --help | --version)
 		return
 		;;
 	esac
@@ -29,7 +29,7 @@ _daykeep()
 
 	if [[ $cur == -* ]]; then
 		COMPREPLY=($(compgen -W '--file= --summarize --format= --hm --now
-			--convert --track --append= --utc --epoch= --help --version' -- "$cur"))
+			--convert --track --append= --utc --epoch= --day-length= --help --version' -- "$cur"))
 		[[ ${COMPREPLY-} == *= ]] && compopt -o nospace
 	fi
 } &&

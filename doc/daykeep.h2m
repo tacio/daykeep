@@ -42,6 +42,11 @@ Day 0, unless
 .B \-\-epoch
 is given; it overrides the config file.
 .TP
+.B DAYKEEP_DAY_LENGTH
+Whole seconds per personal day (1 through 1000000000, default 86400), unless
+.B \-\-day-length
+is given.  Each setting independently overrides its config value.
+.TP
 .B XDG_CONFIG_HOME
 The directory holding
 .IR daykeep/config .
@@ -60,15 +65,28 @@ Settings, one
 .I "key = value"
 per line;
 .B #
-starts a comment.  The only key is
-.BR epoch ,
-day 0, as for
-.BR \-\-epoch .
+starts a comment.  Keys are
+.BR epoch
+(day 0, as for
+.BR \-\-epoch )
+and
+.BR day_length
+(whole seconds per day, as for
+.BR \-\-day-length ).
+The last occurrence of each key counts.  The file is read when either
+setting needs it; overridden values of known keys are ignored.  Unknown
+keys and malformed lines remain errors.  Overriding both settings bypasses
+the file entirely.  Empty environment variables count as unset.
 The file is
 .I $XDG_CONFIG_HOME/daykeep/config
 when
 .B XDG_CONFIG_HOME
 is set.
+.PP
+Logs must be read or resumed with the epoch and day length used to write
+them; neither setting is stored in the log.  Decimal input rounds to whole
+seconds, and output to four decimal places.  Civil dates and HH:MM retain
+their ordinary meaning.
 
 [SEE ALSO]
 .BR date (1)

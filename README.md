@@ -43,7 +43,8 @@ $ timekeep "$(cat today.log)"      # one range per line
 `daykeep` is a hosted-C companion utility (in `src/`) that works in decimal
 time: a day number plus a fraction of a day, counted from day 0 =
 2000-01-01 00:00 UTC (change it with `--epoch`, `DAYKEEP_EPOCH` or
-`epoch = DATE` in `~/.config/daykeep/config`). 90 minutes is `.0625`. It sums ranges, tracks time
+`epoch = DATE` in `~/.config/daykeep/config`). A day defaults to 86,400
+seconds; with that default, 90 minutes is `.0625`. It sums ranges, tracks time
 interactively, and does `--now` and `--convert`.
 
 ```console
@@ -65,6 +66,30 @@ $ daykeep --convert .5 9 +9 10:00      # stamps may leave out digits
 
 See `daykeep --help` for the digit-completion rules, `man daykeep`, or
 `info daykeep` for the full manual (the calendar, the epoch, the units).
+
+### Choose your day length
+
+Set `--day-length=SECONDS`, `DAYKEEP_DAY_LENGTH`, or `day_length = SECONDS`
+in `~/.config/daykeep/config`. Any whole number from 1 to 1,000,000,000
+seconds is accepted. Each setting independently uses the command line,
+then the nonempty environment variable, then the config file, then its
+default. For example:
+
+```ini
+epoch = 2000-01-01 03:00 -0300
+day_length = 90000
+```
+
+That day lasts 25 hours, starting from the fixed instant you chose.
+Subsequent boundaries follow every 90,000 seconds, independently of local
+midnight or daylight saving. `daykeep --day-length=43200 --now` uses a
+12-hour day for one invocation without changing the configured epoch.
+
+Stamps and durations still display four decimal places. Each displayed step
+is `day_length / 10000` seconds; input rounds to whole seconds, so very
+short days cannot represent every fraction exactly. Civil dates, `HH:MM`,
+and hour/minute output retain their usual meanings. Logs store decimal
+stamps: read or resume them with the epoch and day length used to write them.
 
 ### Tracker
 
@@ -151,11 +176,12 @@ make verify-daykeep # only the daykeep part
 `src/dktime.c` completes typed digits to the right day, rolls range ends over
 correctly and rounds so every printed stamp reads back as itself, and seeded
 checks of the compiled `dktime.c` (via ctypes) tie that model to the code.
-It takes about 35 seconds; `DK_VERIFY_ITERS` and `DK_VERIFY_SEED` change the
-number of random cases and the seed.
+The proofs and compiled checks run across ten representative day lengths,
+including both bounds. `DK_VERIFY_ITERS` sets the total number of random
+cases per check across those lengths; `DK_VERIFY_SEED` sets the seed.
 
 `make verify` runs inside a user systemd scope capped at 12 GB of RAM with
-swap disabled. A normal run peaks at about 420 MB and takes under a minute.
+swap disabled.
 The cap is there so that a runaway symbolic execution (for example, after a
 change to the program) gets OOM-killed on its own instead of taking the
 terminal with it. Set a different

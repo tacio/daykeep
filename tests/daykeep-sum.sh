@@ -24,7 +24,7 @@ fail=0
 
 export DAYKEEP_NOW=14301.4564      # 10:57:13 UTC = 07:57:13 local
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT DAYKEEP_EPOCH
+unset POSIXLY_CORRECT DAYKEEP_EPOCH DAYKEEP_DAY_LENGTH
 
 # an empty config directory, so the user's own config can't interfere
 tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1

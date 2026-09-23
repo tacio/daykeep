@@ -59,8 +59,9 @@ static void usage(void)
 	       "  or:  %s [OPTION]... --track\n", PROGRAM, PROGRAM, PROGRAM, PROGRAM);
 	fputs("Work with decimal time: day numbers and fractions of a day counted\n"
 	      "from day 0, which is 2000-01-01 00:00 UTC unless --epoch says\n"
-	      "otherwise.  One step of the 4th decimal place is 8.64 seconds;\n"
-	      "90 minutes is .0625.\n"
+	      "otherwise.  A day is 86400 seconds unless --day-length says\n"
+	      "otherwise.  Examples below use the default length: one displayed\n"
+	      "step is 8.64 seconds and 90 minutes is .0625.\n"
 	      "\n"
 	      "Sum time ranges, written START - END, and print the running total\n"
 	      "after each one.  Ranges come from the operands, else from each FILE,\n"
@@ -84,6 +85,8 @@ static void usage(void)
 	      "      --epoch=DATE   count days from DATE, an ISO date and time as\n"
 	      "                       --convert reads it, but in UTC unless it has\n"
 	      "                       an offset\n"
+	      "      --day-length=SECONDS\n"
+	      "                    seconds per day: 1..1000000000 (default 86400)\n"
 	      "      --help         display this help and exit\n"
 	      "      --version      output version information and exit\n"
 	      "\n"
@@ -106,6 +109,10 @@ static void usage(void)
 	      "Day 0 comes from --epoch, else from the DAYKEEP_EPOCH environment\n"
 	      "variable, else from an 'epoch = DATE' line in\n"
 	      "$XDG_CONFIG_HOME/daykeep/config (~/.config/daykeep/config).\n"
+	      "Day length comes from --day-length, else DAYKEEP_DAY_LENGTH, else\n"
+	      "'day_length = SECONDS' in that file.  Settings resolve independently.\n"
+	      "Decimal input rounds to whole seconds; output has four decimals.\n"
+	      "Read logs with the epoch and day length used to write them.\n"
 	      "\n"
 	      "Exit status is 0 if all went well, 1 if some input was invalid, and\n"
 	      "2 for usage or I/O errors.\n", stdout);
@@ -129,13 +136,18 @@ dk_secs clock_now(void)
 	char *end;
 	long long t;
 
-	if (!env || !*env)
-		return dk_from_unix(time(NULL));
+	if (!env || !*env) {
+		if (dk_sub((dk_secs)time(NULL), dk_epoch, &s) == 0)
+			return s;
+		fprintf(stderr, "%s: current time is out of range\n", PROGRAM);
+		exit(EXIT_TROUBLE);
+	}
 	if (*env == '@') {
 		errno = 0;
 		t = strtoll(env + 1, &end, 10);
-		if (end != env + 1 && *end == '\0' && errno == 0)
-			return dk_from_unix((time_t)t);
+		if (end != env + 1 && *end == '\0' && errno == 0
+		    && dk_sub(t, dk_epoch, &s) == 0)
+			return s;
 	} else if (dk_parse_literal(env, &s) == 0) {
 		return s;
 	}
@@ -143,7 +155,7 @@ dk_secs clock_now(void)
 	exit(EXIT_TROUBLE);
 }
 
-/* --- the epoch ---------------------------------------------------------- */
+/* --- configuration ------------------------------------------------------ */
 
 #define BLANKS " \t\r\n\f\v"
 
@@ -187,11 +199,17 @@ static char *config_path(void)
 
 /* Read "key = value" lines; '#' starts a comment line.  A missing file is
  * fine; anything wrong in one that exists is an error. */
-static void read_config(void)
+static void read_config(int need_epoch, int need_length)
 {
 	char *name = config_path(), *line = NULL, *key, *val, *eq;
 	size_t cap = 0;
 	long n = 0;
+	char *values[2] = { NULL, NULL };
+	long lines[2] = { 0, 0 };
+	int needs[] = { need_epoch, need_length };
+	int (*setters[])(const char *) = { dk_set_epoch, dk_set_day_length };
+	const char *errors[] = { "invalid epoch", "invalid day length" };
+	int setting, i;
 	FILE *f;
 
 	if (!name)
@@ -214,10 +232,22 @@ static void read_config(void)
 		*eq = '\0';
 		key = trim(key);
 		val = trim(eq + 1);
-		if (strcmp(key, "epoch") != 0)
+		if (strcmp(key, "epoch") == 0) {
+			setting = 0;
+		} else if (strcmp(key, "day_length") == 0) {
+			setting = 1;
+		} else {
 			config_error(name, n, "unknown setting", key);
-		if (dk_set_epoch(val))
-			config_error(name, n, "invalid epoch", val);
+			continue;
+		}
+		if (needs[setting]) {
+			free(values[setting]);
+			if (!(values[setting] = strdup(val))) {
+				fprintf(stderr, "%s: %s\n", PROGRAM, strerror(errno));
+				exit(EXIT_TROUBLE);
+			}
+			lines[setting] = n;
+		}
 	}
 	if (ferror(f)) {
 		fprintf(stderr, "%s: %s: read error: %s\n", PROGRAM, name, strerror(errno));
@@ -225,27 +255,39 @@ static void read_config(void)
 	}
 	free(line);
 	fclose(f);
+	for (i = 0; i < 2; i++) {
+		if (values[i] && setters[i](values[i]))
+			config_error(name, lines[i], errors[i], values[i]);
+		free(values[i]);
+	}
 	free(name);
 }
 
-/* day 0 comes from --epoch (OPT), else DAYKEEP_EPOCH, else the config file */
-static void set_epoch(const char *opt)
+/* Resolve each setting independently; overridden values need not be valid. */
+static void configure(const char *epoch, const char *length)
 {
-	const char *env = getenv("DAYKEEP_EPOCH");
+	const char *opts[] = { epoch, length };
+	const char *names[] = { "--epoch", "--day-length" };
+	const char *envnames[] = { "DAYKEEP_EPOCH", "DAYKEEP_DAY_LENGTH" };
+	int (*setters[])(const char *) = { dk_set_epoch, dk_set_day_length };
+	int need[2], i;
 
-	if (opt) {
-		if (dk_set_epoch(opt)) {
-			fprintf(stderr, "%s: invalid argument '%s' for '--epoch'\n", PROGRAM, opt);
-			try_help();
-		}
-	} else if (env && *env) {
-		if (dk_set_epoch(env)) {
-			fprintf(stderr, "%s: invalid DAYKEEP_EPOCH '%s'\n", PROGRAM, env);
+	for (i = 0; i < 2; i++) {
+		const char *env = getenv(envnames[i]);
+		const char *value = opts[i] ? opts[i] : env && *env ? env : NULL;
+		need[i] = value == NULL;
+		if (value && setters[i](value)) {
+			if (opts[i]) {
+				fprintf(stderr, "%s: invalid argument '%s' for '%s'\n",
+				        PROGRAM, value, names[i]);
+				try_help();
+			}
+			fprintf(stderr, "%s: invalid %s '%s'\n", PROGRAM, envnames[i], value);
 			exit(EXIT_TROUBLE);
 		}
-	} else {
-		read_config();
 	}
+	if (need[0] || need[1])
+		read_config(need[0], need[1]);
 }
 
 /* --- converting --------------------------------------------------------- */
@@ -322,9 +364,13 @@ static void print_dur(dk_secs d)
 	puts(buf);
 }
 
-static void add_range(dk_secs start, dk_secs end)
+static void add_range(dk_secs start, dk_secs end, const struct src *src)
 {
-	total += end - start;
+	dk_secs duration;
+	if (dk_sub(end, start, &duration) || dk_add(total, duration, &total)) {
+		bad_input(src, "duration total is out of range");
+		return;
+	}
 	if (!summarize)
 		print_dur(total);
 }
@@ -377,7 +423,7 @@ static void sum_line(char *p, const struct src *src, dk_secs t_now)
 			}
 			switch (dk_parse_end(tok, start, utc, &end)) {
 			case 0:
-				add_range(start, end);
+				add_range(start, end, src);
 				state = WANT_START;
 				break;
 			case -2:
@@ -398,7 +444,7 @@ static void sum_line(char *p, const struct src *src, dk_secs t_now)
 		if (t_now < start)
 			bad_input(src, "open range '%s -' starts in the future", start_text);
 		else
-			add_range(start, t_now);
+			add_range(start, t_now, src);
 	}
 }
 
@@ -475,7 +521,7 @@ static void close_stdout(void)
 	}
 }
 
-enum { OPT_NOW = 256, OPT_FORMAT, OPT_HM, OPT_EPOCH, OPT_HELP, OPT_VERSION };
+enum { OPT_NOW = 256, OPT_FORMAT, OPT_HM, OPT_EPOCH, OPT_DAY_LENGTH, OPT_HELP, OPT_VERSION };
 
 static const struct option longopts[] = {
 	{ "file",      required_argument, NULL, 'f' },
@@ -488,6 +534,7 @@ static const struct option longopts[] = {
 	{ "append",    required_argument, NULL, 'a' },
 	{ "utc",       no_argument,       NULL, 'u' },
 	{ "epoch",     required_argument, NULL, OPT_EPOCH },
+	{ "day-length", required_argument, NULL, OPT_DAY_LENGTH },
 	{ "help",      no_argument,       NULL, OPT_HELP },
 	{ "version",   no_argument,       NULL, OPT_VERSION },
 	{ NULL, 0, NULL, 0 }
@@ -496,7 +543,7 @@ static const struct option longopts[] = {
 int main(int argc, char **argv)
 {
 	enum { MODE_NONE, MODE_NOW, MODE_CONVERT, MODE_TRACK } mode = MODE_NONE;
-	const char *log = NULL, *epoch = NULL;
+	const char *log = NULL, *epoch = NULL, *length = NULL;
 	char buf[DK_BUFSZ];
 	dk_secs t_now;
 	int c, i;
@@ -526,6 +573,9 @@ int main(int argc, char **argv)
 			break;
 		case OPT_EPOCH:
 			epoch = optarg;
+			break;
+		case OPT_DAY_LENGTH:
+			length = optarg;
 			break;
 		case 'f':
 			files[nfiles++] = optarg;
@@ -569,7 +619,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%s: -a works only with --track\n", PROGRAM);
 		try_help();
 	}
-	set_epoch(epoch);
+	configure(epoch, length);
 	t_now = clock_now();
 	switch (mode) {
 	case MODE_TRACK:

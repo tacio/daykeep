@@ -7,7 +7,7 @@ Two kinds of check:
   * Z3 theorems, for every input in the stated domain: a line-by-line model
     of the C arithmetic (C's truncating / and %, dk_floor_div, the ndigits
     loop) meets the rules in verify/dkspec.py, and no intermediate overflows
-    64 bits.
+    their declared 64- or 128-bit widths.
   * Property checks of the compiled C, through ctypes: it agrees with the
     model on seeded random and exhaustive inputs, so the model is the code.
 
@@ -31,6 +31,7 @@ import dkspec as S  # noqa: E402
 DAY, TICKS = S.DAY, S.TICKS
 LIMIT = 2**49                  # |seconds| domain: about 17.8 million years
 ITERS = int(os.environ.get("DK_VERIFY_ITERS", "200000"))
+CASES = max(1, ITERS // len(S.LENGTHS))
 SEED = int(os.environ.get("DK_VERIFY_SEED", "20260922"))
 
 results = []
@@ -58,14 +59,13 @@ def prove(formula):
 
 # ------------------------------------------------ model of the C (dktime.c)
 class C:
-    """Builds Z3 terms for C int64 arithmetic, collecting a no-overflow side
-    condition for every intermediate."""
+    """C arithmetic with wide intermediates and explicit checked narrowing."""
 
     def __init__(self):
         self.ov = []
 
-    def v(self, x):
-        self.ov.append(z3.And(x >= -2**63, x < 2**63))
+    def v(self, x, bits=128):
+        self.ov.append(z3.And(x >= -2**(bits - 1), x < 2**(bits - 1)))
         return x
 
     def div(self, a, b):                 # C '/', b > 0 constant
@@ -91,26 +91,29 @@ class C:
         full = z3.Or(ref < 0, n >= self.ndigits(ref))
         m = 10**n
         if forward:
-            r = self.v(ref + self.floor_mod(self.v(typed - ref), m))
+            r = self.v(typed - self.v(self.floor_div(self.v(typed - ref), m) * m))
         else:
-            r = self.v(ref - self.floor_mod(self.v(ref - typed), m))
+            r = self.v(typed + self.v(self.floor_div(self.v(ref - typed), m) * m))
         return z3.If(full, typed, r)
 
     def parse_end(self, typed, n, frac, start):
-        """-> (out, err) of dk_parse_end's decimal branch; err is the -2."""
+        """-> (out, before, invalid), including compose's checked narrowing."""
         ref = self.floor_div(start, DAY)
         literal = z3.And(n > 0, z3.Or(ref < 0, n >= self.ndigits(ref)))
         out1 = self.v(self.v(self.complete_day(typed, n, ref, 1) * DAY) + frac)
         out2 = self.v(self.v(self.complete_day(typed, n, self.v(ref + 1), 1) * DAY) + frac)
         early = out1 < start
-        return z3.If(early, out2, out1), z3.And(early, literal)
+        retry = z3.And(early, z3.Not(literal))
+        invalid = z3.Or(z3.Not(within(out1, -2**63, 2**63)),
+                        z3.And(retry, z3.Not(within(out2, -2**63, 2**63))))
+        return z3.If(retry, out2, out1), z3.And(early, literal), invalid
 
     def ticks(self, s):
         return self.floor_div(self.v(self.v(s * TICKS) + DAY // 2), DAY)
 
     def frac(self, num, k):              # parse_decimal: num, den = 10**k
         den = 10**k
-        return self.div(self.v(self.v(num * DAY) + den // 2), den)
+        return self.div(self.v(self.v(num * DAY, 64) + den // 2, 64), den)
 
 
 def within(x, lo, hi):
@@ -123,7 +126,7 @@ def prove_complete(forward):
     for n in range(S.MAX_DIGITS + 1):
         c = C()
         typed, ref, other = z3.Ints("typed ref other")
-        dom = z3.And(within(typed, 0, 10**n), within(ref, -LIMIT // DAY, LIMIT // DAY))
+        dom = z3.And(within(typed, 0, min(10**n, 2**63)), within(ref, -LIMIT // DAY, LIMIT // DAY))
         r = c.complete_day(typed, n, ref, forward)
         ok, why = prove(z3.Implies(dom, z3.And(
             S.complete_ok(r, typed, n, ref, forward, other), *c.ov)))
@@ -131,7 +134,7 @@ def prove_complete(forward):
             fails.append(f"n={n}: {why}")
     what = "first day >= ref" if forward else "most recent day <= ref"
     record(f"dk_complete_day ({'+' if forward else 'no +'}): ends in the typed "
-           f"digits and is the {what}; full numbers literal; n = 0..9",
+           f"digits and is the {what}; full numbers literal; n = 0..19",
            not fails, "; ".join(fails))
 
 
@@ -140,35 +143,38 @@ def prove_end():
     for n in range(S.MAX_DIGITS + 1):
         c = C()
         typed, frac, start, other = z3.Ints("typed frac start other")
-        dom = z3.And(within(typed, 0, 10**n), within(frac, 0, DAY + 1),
+        dom = z3.And(within(typed, 0, min(10**n, 2**63)), within(frac, 0, DAY + 1),
                      within(start, -LIMIT, LIMIT))
-        out, err = c.parse_end(typed, n, frac, start)
+        out, err, invalid = c.parse_end(typed, n, frac, start)
         ok, why = prove(z3.Implies(dom, z3.And(
-            S.end_ok(out, err, typed, n, frac, start, other), *c.ov)))
+            z3.Implies(z3.Not(invalid), S.end_ok(out, err, typed, n, frac, start, other)),
+            invalid == z3.Not(within(out, -2**63, 2**63)), *c.ov)))
         if not ok:
             fails.append(f"n={n}: {why}")
-        ok, why = prove(z3.Implies(z3.And(dom, frac < DAY, z3.Not(S.is_full(n, start / DAY))),
+        ok, why = prove(z3.Implies(z3.And(dom, z3.Not(invalid), frac < DAY, z3.Not(S.is_full(n, start / DAY))),
                                    S.end_earliest(out, typed, n, frac, start, other)))
         if not ok:
             fails_early.append(f"n={n}: {why}")
     record("dk_parse_end: first match on or after START's day, rolling over; "
-           "full numbers literal, -2 iff before START; n = 0..9", not fails,
+           "full numbers literal, -2 iff before START; overflow rejected; n = 0..19", not fails,
            "; ".join(fails))
     record("dk_parse_end: with frac < 1 day, no matching instant lies between "
            "START and the result", not fails_early, "; ".join(fails_early))
 
 
 def prove_padding():
-    # ".5" == ".5000": k typed fraction digits land on the tick they name
+    # Padding preserves input even when whole-second quantization skips ticks.
     fails = []
     for k in range(1, 5):
         c = C()
         num = z3.Int("num")
         ok, why = prove(z3.Implies(within(num, 0, 10**k), z3.And(
-            c.ticks(c.frac(num, k)) == num * 10**(4 - k), *c.ov)))
+            c.frac(num, k) == c.frac(num * 10**(4 - k), 4),
+            z3.Implies(DAY >= TICKS, c.ticks(c.frac(num, k)) == num * 10**(4 - k)),
+            *c.ov)))
         if not ok:
             fails.append(f"k={k}: {why}")
-    for k in range(1, S.MAX_DIGITS + 1):    # and every fraction stays in a day
+    for k in range(1, S.MAX_FRAC_DIGITS + 1):
         c = C()
         num = z3.Int("num")
         f = c.frac(num, k)
@@ -176,25 +182,27 @@ def prove_padding():
             f == S.frac_of(num, k), f >= 0, f <= DAY, *c.ov)))
         if not ok:
             fails.append(f"k={k} range: {why}")
-    record("fraction digits: right digits omitted count as zeros (k = 1..4); "
+    record("fraction padding is stable; exact ticks when DAY >= 10000; "
            "any 1..9 digits give 0 <= frac <= 1 day", not fails, "; ".join(fails))
 
 
 def prove_rounding():
     c = C()
     s, s2 = z3.Ints("s s2")
-    dom = within(s, -LIMIT, LIMIT)
+    dom = within(s, -2**63, 2**63)
     t = c.ticks(s)
     ok1, why1 = prove(z3.Implies(dom, z3.And(t == S.ticks(s), *c.ov)))
-    c2 = C()
+    # Reuse the proved C == mathematical-floor lemma. Expanding three
+    # nested C truncation expressions obscures this linear division fact.
     ok2, why2 = prove(z3.Implies(
-        z3.And(dom, within(s2, -LIMIT, LIMIT), s <= s2),
-        z3.And(c2.ticks(s) <= c2.ticks(s2),
-               c2.ticks(s + DAY) == c2.ticks(s) + TICKS)))
+        z3.And(dom, within(s2, -2**63, 2**63), s <= s2,
+               within(s + DAY, -2**63, 2**63)),
+        z3.And(S.ticks(s) <= S.ticks(s2),
+               S.ticks(s + DAY) == S.ticks(s) + TICKS)))
     record("ticks: half-up rounding to 1/10000 day, no overflow for "
-           "|s| < 2^49", ok1, why1)
+           "signed 64-bit seconds", ok1, why1)
     record("ticks: monotone, and a day later is exactly 10000 ticks later",
-           ok2, why2)
+           ok1 and ok2, why1 or why2)
 
 
 def prove_roundtrip():
@@ -205,12 +213,13 @@ def prove_roundtrip():
     t = c.ticks(s)
     d, f = c.floor_div(t, TICKS), c.floor_mod(t, TICKS)
     back = c.v(c.v(d * DAY) + c.frac(f, 4))
-    dom = z3.And(within(s, -LIMIT, LIMIT), d >= 0, d < 10**S.MAX_DIGITS)
+    dom = z3.And(within(s, -LIMIT, LIMIT), d >= 0, within(back, 0, 2**63))
     ok1, why1 = prove(z3.Implies(dom, z3.And(c.ticks(back) == t, *c.ov)))
-    ok2, why2 = prove(z3.Implies(dom, z3.And(back - s <= 4, s - back <= 4)))
+    error = S.roundtrip_error()
+    ok2, why2 = prove(z3.Implies(dom, z3.And(back - s <= error, s - back <= error)))
     record("stamp round-trip: parse_literal(fmt_stamp(s)) prints the same, "
-           "for day numbers 0..999999999", ok1, why1)
-    record("stamp round-trip: the value read back is within 4 s of s",
+           "when the rounded seconds fit", ok1, why1)
+    record(f"stamp round-trip: the value read back is within {error} s of s",
            ok2, why2)
 
 
@@ -228,6 +237,7 @@ def load_lib(tmp):
         fn.argtypes = [p, ll, i, ctypes.POINTER(ll)]
     lib.dk_parse_end.argtypes = [p, ll, i, ctypes.POINTER(ll)]
     lib.dk_parse_literal.argtypes = [p, ctypes.POINTER(ll)]
+    lib.dk_set_day_length.argtypes = [p]
     for f in ("stamp", "dur", "hm", "minutes"):
         getattr(lib, f"dk_fmt_{f}").argtypes = [p, ll]
     return lib
@@ -264,7 +274,8 @@ def rand_secs(rng):
     if kind < 0.8:
         return rng.randrange(-2 * DAY, 20 * DAY)          # near day 0
     if kind < 0.9:                                        # at a power of ten
-        return 10**rng.randrange(1, 9) * DAY + rng.randrange(-2 * DAY, 2 * DAY)
+        digits = min(9, len(str(LIMIT // DAY)))
+        return 10**rng.randrange(1, digits) * DAY + rng.randrange(-2 * DAY, 2 * DAY)
     return rng.randrange(-LIMIT, LIMIT)
 
 
@@ -291,7 +302,7 @@ def rand_stamp(rng, ref):
 
 def check_complete(lib, rng):
     bad = []
-    for _ in range(ITERS):
+    for _ in range(CASES):
         ref = rand_secs(rng) // DAY
         n = rng.randrange(0, 5)
         typed = rng.randrange(10**n)
@@ -300,13 +311,13 @@ def check_complete(lib, rng):
         if got != S.complete_py(typed, n, ref, fwd):
             bad.append((typed, n, ref, fwd, got))
             break
-    record(f"C dk_complete_day == definition ({ITERS} seeded cases, n = 0..4)",
+    record(f"C dk_complete_day == definition ({CASES} seeded cases, n = 0..4)",
            not bad, f"typed,n,ref,fwd,got = {bad[:1]}")
 
 
 def check_parse(lib, rng):
     bad_s, bad_e = [], []
-    for _ in range(ITERS):
+    for _ in range(CASES):
         now = rand_secs(rng)
         txt = rand_stamp(rng, now // DAY)
         if lib.parse_stamp(txt, now) != S.parse_stamp_py(txt, now):
@@ -317,24 +328,26 @@ def check_parse(lib, rng):
             bad_e.append((txt, start))
         if bad_s and bad_e:
             break
-    record(f"C dk_parse_stamp == spec, UTC ({ITERS} seeded strings)",
+    record(f"C dk_parse_stamp == spec, UTC ({CASES} seeded strings)",
            not bad_s, f"text,now = {bad_s[:1]}")
-    record(f"C dk_parse_end == spec, UTC ({ITERS} seeded strings)",
+    record(f"C dk_parse_end == spec, UTC ({CASES} seeded strings)",
            not bad_e, f"text,start = {bad_e[:1]}")
 
 
 def check_formats(lib, rng):
     bad = []
-    # every second of day -1, day 0 and today, then random ones
-    cases = [*range(-DAY, DAY), *range(14301 * DAY, 14302 * DAY)]
-    cases += [rand_secs(rng) for _ in range(ITERS)]
+    # Exhaust small/default days; sample large ones without allocating years.
+    step = max(1, DAY // 100000)
+    cases = [*range(-DAY, DAY, step), *range(14301 * DAY, 14302 * DAY, step)]
+    cases += [rand_secs(rng) for _ in range(CASES)]
+    cases += [-2**63, -2**63 + 1, 2**63 - 2, 2**63 - 1]
     for s in cases:
         st = lib.fmt("stamp", s)
         if st != S.fmt_stamp_py(s):
             bad.append(("stamp", s, st))
-        elif 0 <= S.ticks_py(s) < 10**S.MAX_DIGITS * TICKS:
+        elif 0 <= s <= S.MAX_SECS - S.roundtrip_error():
             back = lib.parse_literal(st)
-            if back is None or lib.fmt("stamp", back) != st or abs(back - s) > 4:
+            if back is None or lib.fmt("stamp", back) != st or abs(back - s) > S.roundtrip_error():
                 bad.append(("round-trip", s, st))
         for kind, py in (("dur", S.fmt_dur_py), ("hm", S.fmt_hm_py),
                          ("minutes", S.fmt_minutes_py)):
@@ -343,26 +356,28 @@ def check_formats(lib, rng):
         if bad:
             break
     record(f"C formatters == spec, and stamps round-trip ({len(cases)} values, "
-           "3 days exhaustive)", not bad, f"{bad[:1]}")
+           f"3 days at {step}-second intervals)", not bad, f"{bad[:1]}")
 
 
 if __name__ == "__main__":
     print("daykeep decimal-time verification\n" + "=" * 40)
-    print("\n-- Z3 theorems over a model of dktime.c --")
-    prove_complete(False)
-    prove_complete(True)
-    prove_end()
-    prove_padding()
-    prove_rounding()
-    prove_roundtrip()
-
-    print(f"\n-- the compiled dktime.c against the spec (seed {SEED}) --")
     with tempfile.TemporaryDirectory() as tmp:
         lib = Lib(load_lib(tmp))
         rng = random.Random(SEED)
-        check_complete(lib, rng)
-        check_parse(lib, rng)
-        check_formats(lib, rng)
+        for DAY in S.LENGTHS:
+            S.DAY = DAY
+            print(f"\n-- day length {DAY}: Z3 theorems --")
+            prove_complete(False)
+            prove_complete(True)
+            prove_end()
+            prove_padding()
+            prove_rounding()
+            prove_roundtrip()
+            print(f"\n-- compiled C, day length {DAY}, seed {SEED} --")
+            assert lib.lib.dk_set_day_length(str(DAY).encode()) == 0
+            check_complete(lib, rng)
+            check_parse(lib, rng)
+            check_formats(lib, rng)
 
     print("\n" + "=" * 40)
     n_ok = sum(1 for _, ok, _ in results if ok)

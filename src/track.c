@@ -293,6 +293,20 @@ static void rubout(size_t *len, size_t to)
 		fputs("\b \b", stdout);
 }
 
+/* Check a proposed last stamp before changing the screen or the log. */
+static int fits_total(dk_secs s, size_t index)
+{
+	dk_secs total = 0, duration, end;
+	size_t i;
+	for (i = 1; i <= index; i += 2) {
+		end = i == index ? s : stamps[i];
+		if (dk_sub(end, stamps[i - 1], &duration)
+		    || dk_add(total, duration, &total))
+			return 0;
+	}
+	return 1;
+}
+
 /* Edit the last stamp on a one-line editor, prefilled with its value.  The
  * first stamp is completed from today, like a stamp operand; every later one
  * from the stamp before it, like a range END. */
@@ -331,6 +345,10 @@ static void edit_last(void)
 		r = dk_parse_stamp(line, clock_now(), utc, &s);
 	else
 		r = dk_parse_end(line, stamps[n - 2], utc, &s);
+	if (r == 0 && !fits_total(s, n - 1)) {
+		snprintf(msg, sizeof msg, "duration total is out of range; stamp unchanged");
+		return;
+	}
 	if (r == 0) {
 		stamps[n - 1] = s;
 		log_write();
@@ -354,6 +372,10 @@ static void stamp(void)
 		now = stamps[n - 1];
 		dk_fmt_stamp(a, now);
 		snprintf(msg, sizeof msg, "the entry starts in the future: ended it at %s", a);
+	}
+	if (!fits_total(now, n)) {
+		snprintf(msg, sizeof msg, "duration total is out of range; stamp unchanged");
+		return;
 	}
 	push(now);
 	log_write();

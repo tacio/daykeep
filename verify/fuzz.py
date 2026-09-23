@@ -41,7 +41,7 @@ import spec          # noqa: E402
 import dkspec as S   # noqa: E402
 
 DAY = S.DAY
-EPOCH_UNIX = 10957 * DAY
+EPOCH_UNIX = S.EPOCH
 ITERS = int(os.environ.get("FUZZ_ITERS", "300"))
 SEED = int(os.environ.get("FUZZ_SEED", "20260922"))
 TIMEOUT = 10
@@ -168,7 +168,10 @@ def sum_model(text, now, off, fmt, summarize):
     total, out, status = 0, [], 0
 
     def add(a, b):
-        nonlocal total
+        nonlocal total, status
+        if S.checked(b - a) is None or S.checked(total + b - a) is None:
+            status = 1
+            return
         total += b - a
         if not summarize:
             out.append(FMT[fmt](total))
@@ -270,10 +273,17 @@ def rand_sum_text(rng, ref_day, allow_nul):
 
 
 def now_env(now, tz):
-    return {"DAYKEEP_NOW": f"@{now + EPOCH_UNIX}", "TZ": tz}
+    return {"DAYKEEP_NOW": f"@{now + EPOCH_UNIX}", "TZ": tz,
+            "DAYKEEP_DAY_LENGTH": str(DAY)}
+
+
+def choose_length(rng):
+    global DAY
+    DAY = S.DAY = rng.choice(S.LENGTHS)
 
 
 def case_sum(rng, repro, dk, tmp):
+    choose_length(rng)
     now = rand_now(rng)
     tz, off, zargs = rand_zone(rng)
     fmt = rng.choice(list(FMT))
@@ -312,11 +322,15 @@ def clock_py(s, off):
 
 def case_convert_model(rng, repro, dk):
     """Values with ':' print a stamp, others a clock, per the model."""
+    choose_length(rng)
     now = 14301 * DAY + rng.randrange(DAY) if rng.random() < 0.8 else rand_now(rng)
-    now = max(now, 0)
+    now = min(max(now, 0), 100000000000)
     tz, off, zargs = rand_zone(rng)
     vals = [rand_stamp(rng, now // DAY, max_full=6) for _ in range(rng.randrange(1, 20))]
     vals = [v for v in vals if v and not v.startswith("-")]
+    # Python's calendar oracle supports only four-digit years.
+    vals = [v for v in vals if (s := S.parse_stamp_py(v, now, off)) is None
+            or -31536000 <= s <= 100000000000]
     want, wrc = b"", 0
     for v in vals:
         s = S.parse_stamp_py(v, now, off)
@@ -338,11 +352,12 @@ def case_convert_model(rng, repro, dk):
 
 def case_convert_roundtrip(rng, repro, dk):
     """stamp -> clock (checked by date(1)) -> stamp, in a real zone."""
+    choose_length(rng)
     zone = rng.choice(REAL_ZONES)
-    env = {"TZ": zone, "DAYKEEP_NOW": "14301.4564"}
-    secs = [rng.randrange(0, 60000 * DAY) for _ in range(40)]
+    env = {"TZ": zone, "DAYKEEP_NOW": "0", "DAYKEEP_DAY_LENGTH": str(DAY)}
+    secs = [rng.randrange(0, min(60000 * DAY, 100000000000)) for _ in range(40)]
     stamps = [S.fmt_stamp_py(s) for s in secs]
-    repro.update(zone=zone, stamps=stamps)
+    repro.update(env=env, stamps=stamps)
     rc, out, err = run([dk, "--convert", *stamps], b"", env)
     clocks = out.decode().splitlines()
     if rc != 0 or len(clocks) != len(stamps):
@@ -365,7 +380,10 @@ def case_convert_roundtrip(rng, repro, dk):
 OUT_LINE = re.compile(rb"-?[0-9]*\.[0-9]{4}|-?[0-9]+h [0-9]+m|-?[0-9]+"
                       rb"|[0-9]{4,}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}"
                       rb"|\?")
-OPTIONS = ["-s", "--summarize", "--hm", "--format=hm", "--format=minutes",
+OPTIONS = ["--day-length", "--day-length=1", "--day-length=1000000000",
+           "--day-length=0", "--day-length=-1", "--day-length=1.5",
+           "--day-length=1000000001", "--epoch=1987-07-28",
+           "-s", "--summarize", "--hm", "--format=hm", "--format=minutes",
            "--format=bogus", "--format", "-u", "--utc", "--now", "-c", "--convert",
            "-a", "log", "--append=log", "-f", "--", "-", "-q", "-z", "--bogus",
            "--zz=1", "-fx", "-sz"]
@@ -384,6 +402,7 @@ def junk(rng, n):
 
 
 def case_garbage(rng, repro, dk, tmp):
+    choose_length(rng)
     n = rng.choice([0, 1, 10, 100, 1000, 70000])
     data = junk(rng, n)
     with open(os.path.join(tmp, "g.txt"), "wb") as f:
@@ -394,6 +413,7 @@ def case_garbage(rng, repro, dk, tmp):
     ops = [junk(rng, rng.randrange(0, 40)).replace(b"\0", b"") for _ in range(rng.randrange(0, 3))]
     args += ops
     env = {"TZ": rng.choice(FIXED_ZONES)[0] if rng.random() < 0.7 else rng.choice(REAL_ZONES)}
+    env["DAYKEEP_DAY_LENGTH"] = str(DAY)
     r = rng.random()
     if r < 0.8:
         env["DAYKEEP_NOW"] = f"@{rand_now(rng) + EPOCH_UNIX}"
@@ -453,14 +473,18 @@ def rand_keys(rng):
 
 
 def case_track(rng, repro, dk, tmp):
+    choose_length(rng)
+    now = 14301 * S.CIVIL_DAY + rng.randrange(S.CIVIL_DAY)
+    today = now // DAY
     log = os.path.join(tmp, "track.log")
     old = b""
     if rng.random() < 0.3:                               # earlier sessions
-        old = b"14300.1000 - 14300.2000\n"
-        old += rng.choice([b"", b"14301.0000 -\n", b"14301.0000 -", b"14300.3000 - 14300.4000"])
+        old = f"{today - 1:05d}.1000 - {today - 1:05d}.2000\n".encode()
+        old += rng.choice([b"", f"{today:05d}.0000 -\n".encode(),
+                           f"{today:05d}.0000 -".encode(),
+                           f"{today - 1:05d}.3000 - {today - 1:05d}.4000".encode()])
     with open(log, "wb") as f:
         f.write(old)
-    now = 14301 * DAY + rng.randrange(DAY)
     tz, off, zargs = rand_zone(rng)
     fmt = rng.choice(list(FMT))
     env = now_env(now, tz)

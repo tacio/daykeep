@@ -12,9 +12,22 @@ import re
 
 import z3
 
-DAY = 86400          # seconds per day
-TICKS = 10000        # output steps per day (4 decimal places, 8.64 s each)
-MAX_DIGITS = 9       # longest day number / fraction dktime reads
+DAY = 86400          # configured seconds per personal day
+CIVIL_DAY = 86400    # civil clock arithmetic always uses Earth days
+EPOCH = 946684800    # fixed instant, independent of DAY
+TICKS = 10000        # four decimal places
+MAX_DIGITS = 19
+MAX_FRAC_DIGITS = 9
+MAX_SECS = 2**63 - 1
+LENGTHS = (1, 3, 9999, 10000, 10001, 43200, 86400, 88775, 90000, 1000000000)
+
+
+def checked(s):
+    return s if -2**63 <= s <= MAX_SECS else None
+
+
+def roundtrip_error():
+    return (DAY + TICKS) // (2 * TICKS)
 
 
 # --- the rules, as Z3 predicates (Int arithmetic: / and % floor) ---------
@@ -117,7 +130,9 @@ def parse_decimal_py(s):
     m = DECIMAL.fullmatch(s)
     if not m or len(m.group(2)) > MAX_DIGITS or not (m.group(2) or m.group(3)):
         return None
-    day, fr = m.group(2), (m.group(3) or "")[:MAX_DIGITS]
+    day, fr = m.group(2), (m.group(3) or "")[:MAX_FRAC_DIGITS]
+    if int(day or 0) > MAX_SECS:
+        return None
     frac = (int(fr) * DAY + 10**len(fr) // 2) // 10**len(fr) if fr else 0
     return bool(m.group(1)), len(day), int(day or 0), frac
 
@@ -149,12 +164,12 @@ def parse_stamp_py(s, now, off=0):
     DST).  -> seconds, or None."""
     c = parse_clock_py(s)
     if c is not None:
-        return (now + off) // DAY * DAY + c - off
+        return checked((now + EPOCH + off) // CIVIL_DAY * CIVIL_DAY + c - off - EPOCH)
     p = parse_decimal_py(s)
     if p is None:
         return None
     plus, n, typed, frac = p
-    return complete_py(typed, n, now // DAY, plus) * DAY + frac
+    return checked(complete_py(typed, n, now // DAY, plus) * DAY + frac)
 
 
 def parse_end_py(s, start, off=0):
@@ -163,10 +178,10 @@ def parse_end_py(s, start, off=0):
     such time not before START.  Searches up to 2 * 10**n days."""
     c = parse_clock_py(s)
     if c is not None:
-        d = (start + off) // DAY
-        while d * DAY + c - off < start:
+        d = (start + EPOCH + off) // CIVIL_DAY
+        while d * CIVIL_DAY + c - off - EPOCH < start:
             d += 1
-        return d * DAY + c - off
+        return checked(d * CIVIL_DAY + c - off - EPOCH)
     else:
         p = parse_decimal_py(s)
         if p is None:
@@ -175,9 +190,11 @@ def parse_end_py(s, start, off=0):
     ref = start // DAY
     if n > 0 and (ref < 0 or ref < 10**n):
         out = typed * DAY + frac
+        if checked(out) is None:
+            return None
         return "before" if out < start else out
     # the first day >= ref ending in the digits, whose frac is not before start
     d = ref
     while d % 10**n != typed or d * DAY + frac < start:
         d += 1
-    return d * DAY + frac
+    return checked(d * DAY + frac)

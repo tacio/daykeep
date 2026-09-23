@@ -9,6 +9,16 @@ daykeep NEWS
   --epoch=DATE, the DAYKEEP_EPOCH environment variable or an
   'epoch = DATE' line in ~/.config/daykeep/config moves day 0.
 
+  --day-length=SECONDS, DAYKEEP_DAY_LENGTH or 'day_length = SECONDS' in
+  the config chooses the length of a personal day.  The default is 86400;
+  any whole number from 1 through 1000000000 is accepted.  Epoch and length
+  resolve independently.  Civil clocks retain their usual meaning.
+  Read existing logs with their original epoch and day length.
+
+  Day numbers now accept up to 19 digits within signed 64-bit seconds.
+  Decimal input still rounds to whole seconds and output to four places;
+  arithmetic overflow is rejected, and formatting uses wide intermediates.
+
   It sums START - END ranges from the operands, from -f FILE or from
   standard input, printing the running total as a decimal (the default),
   as hours and minutes (--hm) or as minutes (--format=minutes).

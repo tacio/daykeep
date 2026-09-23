@@ -1,7 +1,8 @@
 /* libFuzzer harness for daykeep's time library (make fuzz-libfuzzer).
  *
- * Input: one flag byte (bit 0: UTC), eight bytes of "now" (little-endian,
- * folded into |s| < 2^49), then the text to parse.  Every parser runs on
+ * Input: one flag byte (bit 0: UTC, remaining bits: day-length selector),
+ * eight bytes of "now" (little-endian, folded into |s| < 2^49), then the
+ * text to parse. Every parser runs on
  * the text; every result is formatted every way.  Besides the sanitizers,
  * it traps if a range END comes before its START, or if a stamp does not
  * read back as itself.
@@ -23,6 +24,7 @@
  */
 #include "dktime.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,19 +42,20 @@ static void fmt_all(dk_secs s, int utc)
 	dk_fmt_clock(buf, s, utc);
 }
 
-/* a stamp in 0..999999999 days prints as digits that read back literally */
+/* Nonnegative stamps read back literally when rounded seconds fit. */
 static void round_trip(dk_secs s)
 {
 	char a[DK_BUFSZ], b[DK_BUFSZ];
 	dk_secs back;
+	long long error = (dk_day_length + 10000) / 20000;
 
-	if (s < 0 || s >= 999999999LL * DK_DAY)
+	if (s < 0 || s > LLONG_MAX - error)
 		return;
 	dk_fmt_stamp(a, s);
 	if (dk_parse_literal(a, &back) != 0)
 		__builtin_trap();
 	dk_fmt_stamp(b, back);
-	if (strcmp(a, b) != 0 || back - s > 4 || s - back > 4)
+	if (strcmp(a, b) != 0 || back - s > error || s - back > error)
 		__builtin_trap();
 }
 
@@ -66,6 +69,10 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
+	static const char *lengths[] = {
+		"1", "3", "9999", "10000", "10001", "43200", "86400",
+		"88775", "90000", "1000000000"
+	};
 	uint64_t raw = 0;
 	dk_secs now, s, e;
 	char *text;
@@ -74,6 +81,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	if (size < 9)
 		return 0;
 	utc = data[0] & 1;
+	dk_set_day_length(lengths[(data[0] >> 1) % (sizeof lengths / sizeof *lengths)]);
 	for (i = 0; i < 8; i++)
 		raw |= (uint64_t)data[1 + i] << (8 * i);
 	now = (dk_secs)(raw % (2 * (uint64_t)LIMIT)) - LIMIT;
@@ -89,7 +97,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	if (dk_parse_end(text, now, utc, &e) == 0) {
 		if (e < now)
 			__builtin_trap();
-		fmt_all(e - now, utc);
+		if (dk_sub(e, now, &s) == 0)
+			fmt_all(s, utc);
 	}
 	if (dk_parse_literal(text, &s) == 0)
 		round_trip(s);

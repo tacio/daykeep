@@ -23,7 +23,7 @@ fail=0
 
 export DAYKEEP_NOW=09761.4564      # 2026-09-22 10:57:13 UTC, today = 9761
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT DAYKEEP_EPOCH
+unset POSIXLY_CORRECT DAYKEEP_EPOCH DAYKEEP_DAY_LENGTH
 
 # an empty config directory, so the user's own config can't interfere
 tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
@@ -121,7 +121,7 @@ status bad-date-feb29  1 -c 2025-02-29
 status bad-plus-plus   1 -c ++9
 status bad-dot         1 -c .
 status bad-empty       1 -c ''
-status bad-long-day    1 -c 1234567890
+status bad-long-day    1 -c 12345678901234567890
 status bad-option      2 --bogus
 status now-and-convert 2 --now -c
 status now-operand     2 --now 9
@@ -177,6 +177,60 @@ echo 'epoch = 1987-07-28' >"$tmp/home/.config/daykeep/config"
 HOME=$tmp/home XDG_CONFIG_HOME=rel check config-home 14301.4167 -c 2026-09-22T10:00Z
 HOME=$tmp/home check config-xdg-first 09761.4167 -c 2026-09-22T10:00Z
 env -u HOME -u XDG_CONFIG_HOME "$bin" --now >/dev/null 2>&1 && ok config-none || bad config-none "exit $?"
+
+# --- configurable personal days ------------------------------------------
+for length in 1 3 9999 10000 10001 43200 86400 88775 90000 1000000000; do
+	DAYKEEP_NOW=@$((946684800 + length)) check "length-boundary-$length" 00001.0000 --day-length="$length" --now
+	DAYKEEP_NOW=@946684800 check "length-epoch-$length" 00000.0000 --day-length="$length" --now
+	DAYKEEP_NOW=@$((946684800 - length)) check "length-negative-$length" -0001.0000 --day-length="$length" --now
+	DAYKEEP_NOW=@946684800 check "length-convert-$length" "$(date -u -d @$((946684800 + length)) '+%F %T %z')" --day-length="$length" -u -c 00001
+done
+for value in '' 0 -1 +1 1.5 86400s ' 86400' '86400 ' 1e5 1000000001 999999999999999999999; do
+	status "length-invalid-$value" 2 --day-length="$value" --now
+done
+check length-leading-zeros 09761.4564 --day-length=00086400 --now
+check length-last-option 09761.4564 --day-length=x --day-length=86400 --now
+DAYKEEP_NOW=@946728000 check length-halfday 00001.0000 --day-length=43200 --now
+DAYKEEP_NOW=@946728000 DAYKEEP_DAY_LENGTH=43200 check length-env 00001.0000 --now
+DAYKEEP_NOW=@946728000 DAYKEEP_DAY_LENGTH=x check length-option-wins 00000.5000 --day-length=86400 --now
+DAYKEEP_DAY_LENGTH=x status length-invalid-env 2 --now
+DAYKEEP_DAY_LENGTH= check length-empty-env 09761.4564 --now
+check length-rollover .2000 --day-length=90000 .9 - .1
+check length-hm '5h 0m' --day-length=90000 --hm .9 - .1
+check length-minutes 300 --day-length=90000 --format=minutes .9 - .1
+check length-clock-decimal .0800 --day-length=90000 -u 23:00 - 01:00
+check length-clock-hm '2h 0m' --day-length=43200 --hm -u 23:00 - 01:00
+DAYKEEP_NOW=@946684800 check length-whole-second 00001.0000 --day-length=1 -u -c 2000-01-01T00:00:01Z
+DAYKEEP_NOW=@946684800 check length-short-quantization '2000-01-01 00:00:01 +0000' --day-length=1 -u -c .5
+DAYKEEP_NOW=@946684800 check length-custom-epoch 00002.0000 --epoch=1999-12-31 --day-length=43200 --now
+DAYKEEP_NOW=@946684799 check length-negative-fraction -0001.6667 --day-length=3 --now
+DAYKEEP_NOW=@946684800 check length-short-hm -39600.0000 --day-length=1 -c 10:00
+DAYKEEP_NOW=@1790035200 check length-long-number 1235606400.0000 --epoch=1987-07-28 --day-length=1 --now
+DAYKEEP_NOW=1235606400.0000 check length-long-roundtrip '2026-09-22 00:00:00 +0000' --epoch=1987-07-28 --day-length=1 -u -c 1235606400.0000
+DAYKEEP_NOW=9223372036854775807 check length-max-stamp 9223372036854775807.0000 --day-length=1 --now
+DAYKEEP_NOW=9223372036854775808 status length-overflow-now 2 --day-length=1 --now
+DAYKEEP_NOW=@-9223372036854775808 status length-overflow-unix 2 --now
+status length-overflow-day 1 --day-length=1000000000 -c 9223372036854775807
+status length-overflow-frac 1 --day-length=1 -c 9223372036854775807.5
+DAYKEEP_NOW=9223372036854775807 status length-overflow-completion 1 --day-length=1 -c +9
+DAYKEEP_NOW=0 check length-large-format 999999999.0000 --day-length=1000000000 0 - 999999999
+DAYKEEP_NOW=0 status length-overflow-total 1 --day-length=1 '0 - 9223372036854775807 0 - 1'
+
+printf 'epoch = 2000-01-01\nday_length = 43200\n' >"$cfg"
+DAYKEEP_NOW=@946728000 check length-config 00001.0000 --now
+DAYKEEP_NOW=@946728000 check length-config-with-epoch-option 00003.0000 --epoch=1999-12-31 --now
+DAYKEEP_NOW=@946728000 DAYKEEP_EPOCH=1999-12-31 check length-config-with-epoch-env 00003.0000 --now
+DAYKEEP_NOW=@946728000 DAYKEEP_DAY_LENGTH=86400 check length-env-over-config 00000.5000 --now
+DAYKEEP_NOW=@946728000 check length-option-keeps-config-epoch 00000.5000 --day-length=86400 --now
+printf 'day_length = nope\n day_length = 86400 \n' >"$cfg"
+check length-config-last 09761.4564 --now
+printf 'day_length = nope\n' >"$cfg"
+status length-config-invalid 2 --now
+check length-config-bypass 09761.4564 --day-length=86400 --now
+printf 'unknown = value\n' >"$cfg"
+status length-config-unknown 2 --epoch=2000-01-01 --now
+check length-config-bypass-both 09761.4564 --epoch=2000-01-01 --day-length=86400 --now
+rm "$cfg"
 
 # write errors on stdout are reported
 if [ -w /dev/full ]; then

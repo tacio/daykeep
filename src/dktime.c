@@ -17,15 +17,35 @@
 /* dktime: decimal time for daykeep (see dktime.h). */
 #include "dktime.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
 /* longest day number or fraction we read; more fraction digits are ignored
- * (they are far below the 1 s resolution) */
-#define MAX_DAY_DIGITS  9
+ * (each further digit represents less than a second) */
+#define MAX_DAY_DIGITS  19
 #define MAX_FRAC_DIGITS 9
 
 long long dk_epoch = DK_DEFAULT_EPOCH;
+long long dk_day_length = DK_DEFAULT_DAY_LENGTH;
+
+static int narrow(__int128 v, dk_secs *out)
+{
+	if (v < LLONG_MIN || v > LLONG_MAX)
+		return -1;
+	*out = (dk_secs)v;
+	return 0;
+}
+
+int dk_add(dk_secs a, dk_secs b, dk_secs *out)
+{
+	return narrow((__int128)a + b, out);
+}
+
+int dk_sub(dk_secs a, dk_secs b, dk_secs *out)
+{
+	return narrow((__int128)a - b, out);
+}
 
 long long dk_floor_div(long long a, long long b)
 {
@@ -35,14 +55,14 @@ long long dk_floor_div(long long a, long long b)
 	return q;
 }
 
-static long long floor_mod(long long a, long long b)
+static __int128 floor_div_wide(__int128 a, long long b)
 {
-	return a - dk_floor_div(a, b) * b;
+	return a / b - (a % b < 0);
 }
 
 static int is_digit(int c) { return c >= '0' && c <= '9'; }
 
-static int ndigits(long long v)
+static int ndigits(__int128 v)
 {
 	int n = 1;
 	while (v >= 10) {
@@ -52,7 +72,7 @@ static int ndigits(long long v)
 	return n;
 }
 
-long long dk_complete_day(long long typed, int ndig, long long ref, int forward)
+static __int128 complete_day(long long typed, int ndig, __int128 ref, int forward)
 {
 	long long m = 1;
 	int i;
@@ -64,8 +84,35 @@ long long dk_complete_day(long long typed, int ndig, long long ref, int forward)
 	for (i = 0; i < ndig; i++)
 		m *= 10;
 	if (forward)
-		return ref + floor_mod(typed - ref, m);
-	return ref - floor_mod(ref - typed, m);
+		return typed - floor_div_wide(typed - ref, m) * m;
+	return typed + floor_div_wide(ref - typed, m) * m;
+}
+
+long long dk_complete_day(long long typed, int ndig, long long ref, int forward)
+{
+	dk_secs out;
+	return narrow(complete_day(typed, ndig, ref, forward), &out) ? LLONG_MIN : out;
+}
+
+static int compose(__int128 day, long long frac, dk_secs *out)
+{
+	return narrow(day * dk_day_length + frac, out);
+}
+
+int dk_set_day_length(const char *s)
+{
+	long long v = 0;
+	if (!*s)
+		return -1;
+	for (; *s; s++) {
+		if (!is_digit(*s) || v > (DK_MAX_DAY_LENGTH - (*s - '0')) / 10)
+			return -1;
+		v = v * 10 + (*s - '0');
+	}
+	if (v == 0)
+		return -1;
+	dk_day_length = v;
+	return 0;
 }
 
 /* --- parsing ------------------------------------------------------------ */
@@ -88,21 +135,22 @@ static int parse_decimal(const char *s, struct decimal *d)
 	d->ndig = 0;
 	d->day = 0;
 	for (; is_digit(*s); s++) {
-		if (++d->ndig > MAX_DAY_DIGITS)
+		if (++d->ndig > MAX_DAY_DIGITS || d->day > (LLONG_MAX - (*s - '0')) / 10)
 			return -1;
 		d->day = d->day * 10 + (*s - '0');
 	}
 	if (*s == '.') {
-		for (s++; is_digit(*s); s++, nfrac++) {
+		for (s++; is_digit(*s); s++) {
 			if (nfrac < MAX_FRAC_DIGITS) {
 				num = num * 10 + (*s - '0');
 				den *= 10;
+				nfrac++;
 			}
 		}
 	}
 	if (*s != '\0' || d->ndig + nfrac == 0)
 		return -1;
-	d->frac = (num * DK_DAY + den / 2) / den;
+	d->frac = (num * dk_day_length + den / 2) / den;
 	return 0;
 }
 
@@ -142,13 +190,16 @@ static int from_tm(struct tm *tm, int utc, dk_secs *out)
 	t = utc ? timegm(tm) : mktime(tm);
 	if (t == (time_t)-1 && tm->tm_year != 69)   /* 1969-12-31 23:59:59 is -1 */
 		return -1;
-	*out = dk_from_unix(t);
-	return 0;
+	return dk_sub((dk_secs)t, dk_epoch, out);
 }
 
 static int to_tm(dk_secs s, int utc, struct tm *tm)
 {
-	time_t t = dk_to_unix(s);
+	dk_secs unix_secs;
+	time_t t;
+	if (dk_add(s, dk_epoch, &unix_secs))
+		return -1;
+	t = (time_t)unix_secs;
 	return (utc ? gmtime_r(&t, tm) : localtime_r(&t, tm)) ? 0 : -1;
 }
 
@@ -182,8 +233,7 @@ int dk_parse_stamp(const char *s, dk_secs now, int utc, dk_secs *out)
 		return clock_on(now, 0, h, m, sec, utc, out);
 	if (parse_decimal(s, &d))
 		return -1;
-	*out = dk_complete_day(d.day, d.ndig, dk_day(now), d.plus) * DK_DAY + d.frac;
-	return 0;
+	return compose(complete_day(d.day, d.ndig, dk_day(now), d.plus), d.frac, out);
 }
 
 int dk_parse_end(const char *s, dk_secs start, int utc, dk_secs *out)
@@ -202,11 +252,12 @@ int dk_parse_end(const char *s, dk_secs start, int utc, dk_secs *out)
 	if (parse_decimal(s, &d))
 		return -1;
 	literal = d.ndig > 0 && (ref < 0 || d.ndig >= ndigits(ref));
-	*out = dk_complete_day(d.day, d.ndig, ref, 1) * DK_DAY + d.frac;
+	if (compose(complete_day(d.day, d.ndig, ref, 1), d.frac, out))
+		return -1;
 	if (*out < start) {
 		if (literal)
 			return -2;
-		*out = dk_complete_day(d.day, d.ndig, ref + 1, 1) * DK_DAY + d.frac;
+		return compose(complete_day(d.day, d.ndig, (__int128)ref + 1, 1), d.frac, out);
 	}
 	return 0;
 }
@@ -217,8 +268,7 @@ int dk_parse_literal(const char *s, dk_secs *out)
 
 	if (parse_decimal(s, &d) || d.plus || d.ndig == 0)
 		return -1;
-	*out = d.day * DK_DAY + d.frac;
-	return 0;
+	return compose(d.day, d.frac, out);
 }
 
 static int leap(int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
@@ -276,8 +326,7 @@ int dk_parse_date(const char *s, int utc, dk_secs *out)
 	tm.tm_sec = sec;
 	if (from_tm(&tm, utc || have_off, out))
 		return -1;
-	*out -= off;
-	return 0;
+	return dk_sub(*out, off, out);
 }
 
 int dk_set_epoch(const char *s)
@@ -286,55 +335,54 @@ int dk_set_epoch(const char *s)
 
 	if (dk_parse_date(s, 1, &v))
 		return -1;
-	dk_epoch += v;
-	return 0;
+	return dk_add(dk_epoch, v, &dk_epoch);
 }
 
 /* --- formatting --------------------------------------------------------- */
 
 /* seconds -> 1/10000ths of a day, rounded half-up */
-static long long ticks(dk_secs s)
+static __int128 ticks(__int128 s)
 {
-	return dk_floor_div(s * 10000 + DK_DAY / 2, DK_DAY);
+	return floor_div_wide(s * 10000 + dk_day_length / 2, dk_day_length);
 }
 
 int dk_fmt_stamp(char *buf, dk_secs s)
 {
-	long long t = ticks(s);
+	__int128 t = ticks(s);
+	long long day = (long long)floor_div_wide(t, 10000);
+	long long frac = (long long)(t - (__int128)day * 10000);
 	return snprintf(buf, DK_BUFSZ, "%05lld.%04lld",
-	                dk_floor_div(t, 10000), floor_mod(t, 10000));
+	                day, frac);
 }
 
 /* durations format their magnitude, with a '-' in front if negative */
-static const char *sign_of(dk_secs *d)
+static __int128 magnitude(dk_secs d)
 {
-	if (*d >= 0)
-		return "";
-	*d = -*d;
-	return "-";
+	return d < 0 ? -(__int128)d : d;
 }
 
 int dk_fmt_dur(char *buf, dk_secs d)
 {
-	const char *sg = sign_of(&d);
-	long long t = ticks(d);
+	const char *sg = d < 0 ? "-" : "";
+	__int128 t = ticks(magnitude(d));
 
 	if (t < 10000)
-		return snprintf(buf, DK_BUFSZ, "%s.%04lld", sg, t);
-	return snprintf(buf, DK_BUFSZ, "%s%lld.%04lld", sg, t / 10000, t % 10000);
+		return snprintf(buf, DK_BUFSZ, "%s.%04lld", sg, (long long)t);
+	return snprintf(buf, DK_BUFSZ, "%s%llu.%04lld", sg,
+	                (unsigned long long)(t / 10000), (long long)(t % 10000));
 }
 
 int dk_fmt_hm(char *buf, dk_secs d)
 {
-	const char *sg = sign_of(&d);
-	long long min = (d + 30) / 60;
+	const char *sg = d < 0 ? "-" : "";
+	long long min = (long long)((magnitude(d) + 30) / 60);
 	return snprintf(buf, DK_BUFSZ, "%s%lldh %lldm", sg, min / 60, min % 60);
 }
 
 int dk_fmt_minutes(char *buf, dk_secs d)
 {
-	const char *sg = sign_of(&d);
-	return snprintf(buf, DK_BUFSZ, "%s%lld", sg, (d + 30) / 60);
+	const char *sg = d < 0 ? "-" : "";
+	return snprintf(buf, DK_BUFSZ, "%s%lld", sg, (long long)((magnitude(d) + 30) / 60));
 }
 
 int dk_fmt_clock(char *buf, dk_secs s, int utc)

@@ -26,7 +26,7 @@ fail=0
 
 export DAYKEEP_NOW=14301.4564      # 10:57:13 UTC = 07:57:13 local
 export TZ='<-03>3'                 # fixed UTC-3, no DST
-unset POSIXLY_CORRECT DAYKEEP_EPOCH
+unset POSIXLY_CORRECT DAYKEEP_EPOCH DAYKEEP_DAY_LENGTH
 
 tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
 export XDG_CONFIG_HOME=$tmp/config  # empty, so the user's config can't interfere
@@ -138,6 +138,23 @@ file empty-session new ''
 
 got=$(printf '%b' "$(S .3)sq" | "$bin" -t -a log4 | grep -a '^saved')
 [ "$got" == "saved log4" ] && ok s-saved || bad s-saved "[$got]"
+
+# --- custom length: edits, saves, resume and reading back -------------------
+check length-rollover "$(S .9)$(S .1)q" \
+	$' 1  14301.9000 - 14302.1000   .2000\ntotal .2000' --day-length=90000 -a lengthlog
+file length-log lengthlog $'14301.9000 - 14302.1000\n'
+got=$("$bin" --day-length=90000 --hm -f lengthlog)
+[ "$got" == '5h 0m' ] && ok length-read || bad length-read "[$got]"
+printf '%b' "$(S .3)sq" | "$bin" --day-length=43200 -t -a shortlog >/dev/null
+file length-open shortlog $'14301.3000 -\n'
+check length-resume "$(S .5)q" \
+	$' 1  14301.3000 - 14301.5000   .2000\ntotal .2000' --day-length=43200 -a shortlog
+file length-resumed shortlog $'14301.3000 - 14301.5000\n'
+DAYKEEP_NOW=1235606400.0000 check length-short-day '\n\nq' \
+	$' 1  1235606400.0000 - 1235606400.0000   .0000\ntotal .0000' --day-length=1 -a longlog
+file length-long-log longlog $'1235606400.0000 - 1235606400.0000\n'
+DAYKEEP_NOW=0 check length-overflow "$(S 00:00)$(S 9223372036854775807)q" \
+	$' 1  -75600.0000 - 00000.0000   75600.0000\ntotal 75600.0000\nduration total is out of range; stamp unchanged' --day-length=1
 
 # --- signals: the log is current, the terminal state restored, and the exit
 # status is the signal's ---------------------------------------------------------------

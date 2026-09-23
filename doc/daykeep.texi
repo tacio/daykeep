@@ -61,7 +61,8 @@ calendar.
 @chapter Overview
 
 A decimal stamp such as @samp{09761.4564} names a moment: day 9761,
-0.4564 of the way through it.  A duration is a fraction of a day, so
+0.4564 of the way through it.  Unless stated otherwise, examples use the
+default epoch and 86400-second length.  A duration is a fraction of a day, so
 90 minutes is @samp{.0625} and a working day of eight hours is
 @samp{.3333}.  Durations add as plain decimals.
 
@@ -85,6 +86,7 @@ be printed as well (@pxref{Summing ranges}).
 @menu
 * The epoch::           Day 0 and why it is in UTC.
 * Changing the epoch::  --epoch, DAYKEEP_EPOCH and the config file.
+* Choosing day length:: --day-length, DAYKEEP_DAY_LENGTH and day_length.
 * Units::               What the decimals mean.
 * Printed forms::       How stamps and durations are printed.
 @end menu
@@ -95,17 +97,19 @@ be printed as well (@pxref{Summing ranges}).
 @cindex epoch
 @cindex day 0
 Day 0 is 2000-01-01, and it starts at 00:00 UTC, unless you choose
-another epoch (@pxref{Changing the epoch}).  Day numbers count whole
+another epoch (@pxref{Changing the epoch}).  With the default 86400-second
+length, day numbers count whole
 days from there: day 1 is 2000-01-02, and day 9761 is 2026-09-22.
 Days before the epoch have negative numbers.  In terms of Unix time:
 
 @example
-stamp = unix_seconds / 86400 - 10957
+stamp = (unix_seconds - epoch_seconds) / day_length
 @end example
 
 @noindent
-since 2000-01-01 is 10957 days after 1970-01-01.  You can check the
-current stamp against @command{date} and @command{bc}:
+The defaults are @samp{epoch_seconds = 946684800} and
+@samp{day_length = 86400}.  You can check the default current stamp
+against @command{date} and @command{bc}:
 
 @example
 $ echo "scale=4; ($(date -u +%s) - $(date -u -d 2000-01-01 +%s)) / 86400" | bc
@@ -116,7 +120,7 @@ $ daykeep --now
 
 @cindex UTC
 @cindex time zone
-A day begins at midnight UTC, not at local midnight, so a stamp names
+A default day begins at midnight UTC, not at local midnight, so a stamp names
 the same moment everywhere and never skips or repeats around daylight
 saving changes.  The price is that a decimal day does not line up with
 your local day.  West of Greenwich a new day number begins in the
@@ -160,26 +164,68 @@ epoch = 2000-01-01 00:00 -0300
 @end example
 
 In the file, blank lines and lines starting with @samp{#} are ignored,
-and blanks around the key and the value do not matter.  @samp{epoch}
-is the only setting; if it appears twice, the last one counts.  A file
+and blanks around the key and the value do not matter.  The settings are
+@samp{epoch} and @samp{day_length}; if either appears twice, its last
+value counts.  A file
 that does not exist is fine, but a line daykeep cannot read, or a file
-it cannot open, is an error (exit status 2).  The file is read only
-when neither the option nor the variable is set, so either one gets
-around a broken file.
+it cannot open, is an error (exit status 2).  Each setting independently
+uses its option, then its nonempty environment variable, then the file,
+then its default.  The file is read when either setting needs it.
+Overridden values of known keys are ignored; unknown keys and malformed
+lines remain errors.  Override both settings to bypass the file entirely.
+If an option is repeated, its last value counts.
 
 @cindex log, and the epoch
 Stamps count from the epoch, so a log only sums correctly with the
-epoch it was written with.  Durations do not depend on it.  If you move
+epoch and day length it was written with.  Durations do not depend on
+the epoch, but their decimal representation depends on day length.  If you move
 the epoch, keep the old one in @env{DAYKEEP_EPOCH} or
 @option{--epoch} when reading old logs, or convert them first.
+
+@node Choosing day length
+@section Choosing day length
+
+@cindex day length
+Earth's rotation is the default, not a requirement.  Choose a personal
+day with @option{--day-length=@var{seconds}}, @env{DAYKEEP_DAY_LENGTH},
+or @samp{day_length = @var{seconds}} in the configuration file, in that
+order.  The default is 86400 seconds.  Any whole number from 1 through
+1000000000 is accepted, written with decimal digits only.  Zero, signs,
+fractions, unit suffixes and larger values are errors (exit status 2).
+
+@example
+# ~/.config/daykeep/config
+epoch = 2000-01-01 03:00 -0300
+day_length = 90000
+
+$ daykeep --day-length=90000 --hm .9 - .1
+5h 0m
+@end example
+
+The epoch stays fixed.  Day @var{n} starts exactly @var{n} times
+@var{day_length} seconds after it, without adjusting for midnight,
+time zones or daylight saving.  The chosen length applies to stamps,
+decimal durations, completion, rollover, conversions and tracking.
+Civil dates, @samp{HH:MM}, and hours and minutes retain their usual
+meaning.  In particular, @samp{HH:MM} means that time on the civil
+date of the reference instant, even when a personal day has another length.
+
+Logs carry neither the epoch nor the length.  Read or resume old logs
+with their original settings, using @option{--epoch} and
+@option{--day-length} if your defaults have changed.
 
 @node Units
 @section Units
 
-daykeep keeps every value as a whole number of seconds and rounds only
-when it prints, so the totals of long logs do not drift.  It prints
-four decimal places.  One step in the last place is 8.64 seconds, and
-some common durations are:
+daykeep keeps every value as a whole number of seconds.  Decimal input
+rounds to whole seconds, half up; arithmetic then uses those seconds,
+and output rounds half up to four decimal places.  One displayed step
+is @var{day_length}/10000 seconds.  For lengths below 10000 seconds,
+some typed fractions cannot be represented exactly: with a one-second
+day, @samp{.5} rounds to one full day.
+
+With the default length, one step is 8.64 seconds and some common
+durations are:
 
 @multitable {15 minutes} {1.0000} {no (.000694@dots{})}
 @headitem Duration @tab Decimal @tab Exact?
@@ -193,7 +239,9 @@ some common durations are:
 @item 1 day       @tab 1.0000 @tab yes
 @end multitable
 
-A duration of @var{n} minutes is @var{n}/1440 day.  Whole multiples
+A duration of @var{n} minutes is @var{n} times 60 divided by
+@var{day_length} days.  With the default length, it is @var{n}/1440 day.
+Whole multiples
 of 18 minutes (@samp{.0125}) print exactly, as 90 minutes and 3 hours
 do.  Other durations are rounded to the nearest step, half up.
 
@@ -204,7 +252,9 @@ do.  Other durations are rounded to the nearest step, half up.
 @item
 A stamp is printed with a day number of at least five digits and four
 decimals: @samp{09761.4564}, @samp{00007.0000}.  Every stamp from day
-0 on reads back as exactly that stamp, without completion (@pxref{Stamps}).
+0 on reads back as exactly that stamp, without completion (@pxref{Stamps}),
+provided its rounded value fits signed 64-bit seconds.  Day numbers may
+contain up to 19 digits; values exceeding that seconds range are rejected.
 A moment before the epoch is printed as its negative day number plus
 the fraction into that day: @samp{-0001.1250} is 03:00 UTC on day
 @minus{}1, 1999-12-31.  Such stamps are printed but not read.
@@ -463,6 +513,10 @@ Read and print wall-clock times in UTC instead of local time.
 Count days from @var{date} instead of 2000-01-01 00:00 UTC
 (@pxref{Changing the epoch}).
 
+@item --day-length=@var{seconds}
+Choose the number of whole seconds in a personal day, from 1 through
+1000000000; the default is 86400 (@pxref{Choosing day length}).
+
 @item --help
 Print a usage message and exit.
 
@@ -502,6 +556,9 @@ given.
 If set, options must come before operands.
 @item DAYKEEP_EPOCH
 Day 0, unless @option{--epoch} is given (@pxref{Changing the epoch}).
+@item DAYKEEP_DAY_LENGTH
+Seconds per personal day, unless @option{--day-length} is given
+(@pxref{Choosing day length}).  An empty value counts as unset.
 @item XDG_CONFIG_HOME
 Where the configuration file is looked for, as
 @file{$XDG_CONFIG_HOME/daykeep/config}; @file{~/.config} if unset.
@@ -532,7 +589,7 @@ set -g status-right '#(daykeep -s -f ~/work.log)'
 @end example
 
 @item
-Check a stamp against @command{date}:
+Check a stamp against @command{date}, using the default epoch and length:
 @example
 $ date -d @@$(( (9761 + 10957) * 86400 ))
 @end example
