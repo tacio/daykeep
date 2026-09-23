@@ -1,4 +1,4 @@
-These projects made timekeep and daykeep easier to build and check:
+These projects made daykeep easier to build and check:
 
   angr and Z3        symbolic execution and the solver behind verify/
   GNU help2man       generates the daykeep man page from --help

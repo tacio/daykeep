@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Differential and robustness fuzzing for timekeep and daykeep.
+"""Model-based and robustness fuzzing for daykeep.
 
 Each group runs a fixed, seeded number of generated cases and prints ok or
 FAIL; the script exits non-zero if any group fails.  A failure prints a
 reproducer (argv, environment and input) so it can become a regression case
 in tests/.
 
-  timekeep   random and mutated argv through ./timekeep and ./timekeep-c;
-             both must print what spec.sum_mode_py prints
   sum        daykeep sum mode against a Python model of it built on
              dkspec.py: completion, END rollover, open ranges, every
              --format, -s; operands, -f FILE and stdin
@@ -37,7 +35,6 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import spec          # noqa: E402
 import dkspec as S   # noqa: E402
 
 DAY = S.DAY
@@ -97,63 +94,6 @@ def group(name, fn, rng, iters):
                 print(f"     {k}: {v!r}")
             return
     print(f"ok   {name} ({iters} cases)")
-
-
-# ------------------------------------------------------------ timekeep
-TK_ALPHA = b"0123456789:- \n\r\t"
-
-
-def tk_args(rng):
-    """Valid entries, then mutated, split into args (empty ones included)."""
-    lines = []
-    for _ in range(rng.randrange(0, 6)):
-        h1, m1, h2, m2 = (rng.randrange(24), rng.randrange(60),
-                          rng.randrange(24), rng.randrange(60))
-        lines.append(f"{h1:02d}:{m1:02d} - {h2:02d}:{m2:02d}".encode())
-    text = bytearray(rng.choice([b"\n", b"\r\n", b"\n\n", b" "]).join(lines))
-    for _ in range(rng.randrange(0, 6)):                  # mutations
-        op = rng.randrange(5)
-        pos = rng.randrange(len(text) + 1)
-        if op == 0:
-            text[pos:pos] = bytes([rng.choice(TK_ALPHA)])
-        elif op == 1 and text:
-            del text[min(pos, len(text) - 1)]
-        elif op == 2:                                     # huge number
-            text[pos:pos] = str(rng.randrange(10**rng.randrange(5, 40))).encode()
-        elif op == 3:                                     # any byte but NUL
-            text[pos:pos] = bytes([rng.randrange(1, 256)])
-        elif op == 4:
-            text[pos:pos] = rng.choice([b"\r\n", b"\n\n", b"--", b"::", b"  "])
-    args, cur = [], bytearray()
-    for b in text:
-        if b == 0x20 and rng.random() < 0.5:              # split here
-            args.append(bytes(cur))
-            cur = bytearray()
-        else:
-            cur.append(b)
-    args.append(bytes(cur))
-    if rng.random() < 0.2:
-        args.insert(rng.randrange(len(args) + 1), b"")
-    return [a for a in args] if text or rng.random() < 0.5 else []
-
-
-def tk_expect(args):
-    p = spec.Parser()
-    for a in args:
-        for c in a:
-            p.byte(c)
-        p.byte(0x20)
-    return b"".join(line.encode() + b"\n" for line in p.out)
-
-
-def case_timekeep(rng, repro):
-    args = tk_args(rng)
-    repro["argv"] = args
-    want = tk_expect(args)
-    for b in ("timekeep", "timekeep-c"):
-        rc, out, err = run([os.path.join(ROOT, b), *args])
-        if rc != 0 or out != want or err:
-            raise Case(f"{b}: exit {rc}, got {out!r}, want {want!r}, stderr {err!r}")
 
 
 # ------------------------------------------------------- daykeep model
@@ -531,15 +471,12 @@ SCREEN_ENTRY = re.compile(rb" *[0-9]+  ([0-9.]+) - ([0-9.]+|\.\.\.) .*")
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--daykeep", default=os.path.join(ROOT, "daykeep"))
-    ap.add_argument("--skip-timekeep", action="store_true")
     a = ap.parse_args()
     dk = os.path.abspath(a.daykeep)
 
     print(f"fuzzing (seed {SEED}, {ITERS} cases per group, daykeep = {dk})")
     rng = random.Random(SEED)
     with tempfile.TemporaryDirectory() as tmp:
-        if not a.skip_timekeep:
-            group("timekeep == timekeep-c == spec", case_timekeep, rng, ITERS)
         group("daykeep sum mode == model",
               lambda r, p: case_sum(r, p, dk, tmp), rng, ITERS)
         group("daykeep --convert == model (fixed zones)",

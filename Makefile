@@ -1,5 +1,4 @@
-# timekeep (hand-built ELF, sum mode), timekeep-c (freestanding C reference)
-# and daykeep (hosted C, decimal time)
+# daykeep (hosted C, decimal time)
 
 # Copyright (C) 2026 Tacio Medeiros
 #
@@ -36,37 +35,17 @@ CFLAGS   = -g -O2
 DK_FLAGS = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra
 DK_SRC   = src/daykeep.c src/dktime.c src/track.c
 
-TK_CFLAGS = -Os -static -nostdlib -fno-stack-protector -fno-asynchronous-unwind-tables \
-         -fno-unwind-tables -fno-ident -fno-pie -no-pie -ffunction-sections \
-         -fdata-sections -fcf-protection=none -mno-red-zone -Wall -Wextra
-TK_LDFLAGS = -Wl,--gc-sections -Wl,-z,norelro -Wl,--build-id=none -Wl,-z,noseparate-code
-
-all: timekeep timekeep-c daykeep
-
-# the .s file contains the whole ELF (headers included); just flatten it
-timekeep: timekeep.s
-	$(AS) -o $@.o $<
-	objcopy -O binary --only-section=.text $@.o $@
-	rm -f $@.o
-	chmod +x $@
-
-timekeep-c: timekeep.c
-	$(CC) $(TK_CFLAGS) $(TK_LDFLAGS) -o $@ $<
-	strip -s -R .comment -R '.note*' -R '.eh_frame*' $@
+all: daykeep
 
 daykeep: $(DK_SRC) src/dktime.h src/daykeep.h
 	$(CC) $(DK_FLAGS) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $(DK_SRC)
 
-size: all
-	@wc -c timekeep timekeep-c
-
-test: timekeep timekeep-c
-	@./test.sh ./timekeep && ./test.sh ./timekeep-c
-
-check: test daykeep
+test: daykeep
 	@tests/daykeep-core.sh ./daykeep
-	@tests/daykeep-sum.sh ./daykeep ./timekeep
+	@tests/daykeep-sum.sh ./daykeep
 	@tests/daykeep-track.sh ./daykeep
+
+check: test
 
 # daykeep docs: the man page is made from --help, the manual from Texinfo
 doc: doc/daykeep.1 doc/daykeep.info
@@ -108,12 +87,13 @@ uninstall:
 	rm -f $(DESTDIR)$(bindir)/daykeep $(DESTDIR)$(man1dir)/daykeep.1 \
 		$(DESTDIR)$(infodir)/daykeep.info $(DESTDIR)$(bashcompdir)/daykeep
 
-DISTFILES = AUTHORS COPYING NEWS README.md THANKS Makefile \
-	timekeep.s timekeep.c test.sh $(DK_SRC) src/dktime.h src/daykeep.h \
+DISTFILES = AUTHORS COPYING MANIFESTO.md NEWS README.md THANKS Makefile \
+	assets/gone-with-the-wind.webp \
+	$(DK_SRC) src/dktime.h src/daykeep.h \
 	tests/daykeep-core.sh tests/daykeep-sum.sh tests/daykeep-track.sh \
 	tests/distcheck.sh doc/daykeep.texi doc/version.texi doc/daykeep.info \
 	doc/daykeep.h2m doc/daykeep.1 completion/daykeep \
-	verify/README.md verify/spec.py verify/prove.py verify/dkspec.py verify/dkprove.py \
+	verify/README.md verify/dkspec.py verify/dkprove.py \
 	verify/fuzz.py verify/dk_libfuzzer.c
 
 dist: $(DISTFILES)
@@ -128,18 +108,13 @@ dist: $(DISTFILES)
 distcheck: dist
 	tests/distcheck.sh $(distdir).tar.gz
 
-# formal proof over the shipped bytes, then daykeep's decimal-time rules
-# (needs a one-time: make verify-setup); memory-capped in its own scope so a
-# runaway exploration can't OOM the terminal
+# formal proof of daykeep's decimal-time rules (needs a one-time:
+# make verify-setup); memory-capped in its own scope so a runaway solver
+# cannot OOM the terminal
 VERIFY_MEM ?= 12G
 VERIFY_RUN = systemd-run --user --scope --quiet -p MemoryMax=$(VERIFY_MEM) \
 	-p MemorySwapMax=0 verify/.venv/bin/python -u
-verify: timekeep
-	$(VERIFY_RUN) verify/prove.py
-	$(VERIFY_RUN) verify/dkprove.py
-
-# just daykeep's (builds its own copy of src/dktime.c)
-verify-daykeep:
+verify:
 	$(VERIFY_RUN) verify/dkprove.py
 
 verify-setup:
@@ -148,7 +123,7 @@ verify-setup:
 
 # differential and robustness fuzzing (needs verify/.venv); seeded, so
 # reproducible: FUZZ_ITERS=3000 runs longer, FUZZ_SEED=n tries other cases
-fuzz: all
+fuzz: daykeep
 	verify/.venv/bin/python verify/fuzz.py
 
 # the same, with daykeep built with AddressSanitizer and UBSan
@@ -157,7 +132,7 @@ SAN_FLAGS = -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all \
 daykeep-asan: $(DK_SRC) src/dktime.h src/daykeep.h
 	$(CC) $(DK_FLAGS) $(SAN_FLAGS) -o $@ $(DK_SRC)
 
-fuzz-asan: timekeep timekeep-c daykeep-asan
+fuzz-asan: daykeep-asan
 	verify/.venv/bin/python verify/fuzz.py --daykeep ./daykeep-asan
 
 # coverage-guided fuzzing of the time library's parsers (needs clang)
@@ -171,11 +146,11 @@ fuzz-libfuzzer: dk-libfuzzer
 	./dk-libfuzzer -runs=$(FUZZ_RUNS) -seed=1
 
 clean:
-	rm -f timekeep timekeep-c daykeep daykeep-asan dk-libfuzzer *.o
+	rm -f daykeep daykeep-asan dk-libfuzzer *.o
 
 # also removes what the tarball ships but a checkout can regenerate
 maintainer-clean: clean
 	rm -f doc/daykeep.1 doc/daykeep.info doc/version.texi $(PACKAGE)-*.tar.gz
 
-.PHONY: all size test check doc info install install-strip uninstall dist distcheck \
-	verify verify-daykeep verify-setup fuzz fuzz-asan fuzz-libfuzzer clean maintainer-clean
+.PHONY: all test check doc info install install-strip uninstall dist distcheck \
+	verify verify-setup fuzz fuzz-asan fuzz-libfuzzer clean maintainer-clean

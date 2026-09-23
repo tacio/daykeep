@@ -76,9 +76,8 @@ $ daykeep --now
 09761.4564
 @end example
 
-daykeep also reads @samp{HH:MM} wall-clock times, so logs written for
-timekeep, the program it grew out of, still sum.  Hours and minutes can
-be printed as well (@pxref{Summing ranges}).
+daykeep also reads @samp{HH:MM} wall-clock times. Hours and minutes can be
+printed as well (@pxref{Summing ranges}).
 
 @node Decimal time
 @chapter Decimal time

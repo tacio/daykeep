@@ -1,6 +1,4 @@
 # build outputs (make)
-/timekeep
-/timekeep-c
 /daykeep
 /daykeep-asan
 /dk-libfuzzer

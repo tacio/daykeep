@@ -26,7 +26,7 @@ daykeep NEWS
   A stamp may leave out digits.  Missing right digits are zeros, and
   missing left digits are completed to the most recent matching day (or
   the next one with a leading '+').  An END is completed from its START.
-  HH:MM is read as local time, so old timekeep logs still sum.
+  HH:MM is read as local time.
 
   --now prints the current stamp, and --convert turns stamps into local
   dates and times and back.
@@ -43,25 +43,19 @@ daykeep NEWS
 
 ** Verification
 
-  'make verify' also checks daykeep's decimal time: Z3 proves the digit
+  'make verify' checks daykeep's decimal time: Z3 proves the digit
   completion, range-end rollover and rounding rules over a model of the
   time library, and seeded property checks tie that model to the C.
 
 ** Fuzzing
 
-  'make fuzz' runs seeded differential fuzzing of timekeep against its
-  spec and of daykeep against a model of its decimal time, plus garbage
-  input and random tracker sessions.  'make fuzz-asan' does the same with
-  sanitizers, and 'make fuzz-libfuzzer' fuzzes the parsers under clang.
+  'make fuzz' runs seeded model-based fuzzing of daykeep's decimal time,
+  plus garbage input and random tracker sessions.  'make fuzz-asan' does
+  the same with sanitizers, and 'make fuzz-libfuzzer' fuzzes the parsers
+  under clang.
 
 ** Bug fixes found by fuzzing
 
   In --track, pressing Enter while the running entry's start was edited
   into the future wrote an entry that ended before it started, and the log
   no longer read back with -f.  The entry now ends at its start.
-
-** Changes in timekeep
-
-  timekeep is now a sum-only study program: the tracker mode moved to
-  daykeep.  The hand-built ELF shrank from 2692 to 434 bytes and is still
-  formally verified.

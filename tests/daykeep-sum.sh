@@ -1,7 +1,6 @@
 #!/bin/bash
-# usage: tests/daykeep-sum.sh ./daykeep [./timekeep]  -- sum mode
-# Clock and zone are pinned as in daykeep-core.sh.  If a timekeep binary is
-# given, daykeep --hm must print exactly what it prints for the old inputs.
+# usage: tests/daykeep-sum.sh ./daykeep  -- sum mode
+# Clock and zone are pinned as in daykeep-core.sh.
 #
 # Copyright (C) 2026 Tacio Medeiros
 #
@@ -19,7 +18,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 bin=${1:-./daykeep}
-tk=${2:-}
 fail=0
 
 export DAYKEEP_NOW=14301.4564      # 10:57:13 UTC = 07:57:13 local
@@ -141,30 +139,6 @@ if [ -w /dev/full ]; then
 	err=$("$bin" .1 - .2 2>&1 >/dev/full); rc=$?
 	if [ $rc -eq 2 ] && [[ $err == *"write error"* ]]; then ok full-sum
 	else bad full-sum "exit $rc [$err]"; fi
-fi
-
-# --- old timekeep inputs: same output as timekeep, with --hm -----------------------
-same() { # name, args...
-	local name=$1; shift
-	local want got
-	want=$("$tk" "$@")
-	got=$("$bin" --hm -- "$@" 2>&1 </dev/null)
-	if [ "$got" == "$want" ]; then ok "timekeep $name"; else bad "timekeep $name" "got [$got] want [$want]"; fi
-}
-if [ -n "$tk" ]; then
-	same example   $'11:46 - 13:35\n14:26 - 14:45\n15:15 - 16:29\n16:40 - 18:03\n18:36 - 20:30'
-	same wrap-in   '23:24 - 00:52'
-	same wrap-btw  $'22:00 - 23:30\n00:15 - 01:45'
-	same no-nl     '10:00 - 10:45'
-	same crlf      $'10:00 - 11:00\r\n12:00 - 12:30\r'
-	same blanks    $'\n\n10:00 - 11:00\n\n   \n12:00-12:30  '
-	same empty     ''
-	same long-day  '00:00 - 23:59'
-	same split-words 09:00 - 10:30 11:00 - 11:45
-	same split-pair  '10:00-11:00' '12:00-12:30'
-	same across-args '10:00 -' '11:00'
-	same one-digit   '9:05 - 10:00'
-	same midnight    '00:00 - 00:00'
 fi
 
 exit $fail
