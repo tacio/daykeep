@@ -162,6 +162,22 @@ in a comment:
 epoch = 2000-01-01 00:00 -0300
 @end example
 
+To start each ordinary 86400-second day at 03:00 in UTC@minus{}3, set the
+epoch to a 03:00 time with that offset:
+
+@example
+# ~/.config/daykeep/config
+epoch = 2000-01-01 03:00 -0300
+day_length = 86400
+@end example
+
+The epoch is 06:00 UTC, and every boundary is 86400 seconds after the last,
+so each one is 03:00 in the fixed UTC@minus{}3 offset.  The offset is part of
+the epoch, not a request to use the machine's current time zone.  This means
+the result is stable when @env{TZ} differs and when daylight-saving rules
+change.  If you leave off the offset, daykeep reads the epoch as UTC:
+@samp{epoch = 2000-01-01 03:00} would be 00:00 in UTC@minus{}3, not 03:00.
+
 In the file, blank lines and lines starting with @samp{#} are ignored,
 and blanks around the key and the value do not matter.  The settings are
 @samp{epoch} and @samp{day_length}; if either appears twice, its last

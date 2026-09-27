@@ -159,6 +159,9 @@ DAYKEEP_EPOCH=2000-01-01 check config-env-wins 09761.4167 -c 2026-09-22T10:00Z
 check config-option-wins 09761.4167 --epoch=2000-01-01 -c 2026-09-22T10:00Z
 printf 'epoch = 1987-07-28\nepoch = 2000-01-01 00:00 -0300\n' >"$cfg"
 check config-last-wins 09761.0000 -c 2026-09-22
+printf 'epoch = 2000-01-01 03:00 -0300\n' >"$cfg"
+DAYKEEP_NOW=@946792800 check config-utc-minus-3-boundary 00001.0000 --now
+check config-utc-minus-3-boundary-utc '2000-01-02 06:00:00 +0000' -u -c 00001
 printf '\ncolour = red\n' >"$cfg"
 check config-unknown "daykeep: $cfg:2: unknown setting 'colour'" --now
 status config-unknown-status 2 --now

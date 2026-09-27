@@ -8,6 +8,10 @@ daykeep NEWS
   counted from day 0 = 2000-01-01 00:00 UTC.  90 minutes is .0625.
   --epoch=DATE, the DAYKEEP_EPOCH environment variable or an
   'epoch = DATE' line in ~/.config/daykeep/config moves day 0.
+  For a 03:00 boundary in UTC-3, set
+  'epoch = 2000-01-01 03:00 -0300'; the explicit offset fixes the boundary
+  at 06:00 UTC and keeps it independent of the local time zone and daylight
+  saving changes.
 
   --day-length=SECONDS, DAYKEEP_DAY_LENGTH or 'day_length = SECONDS' in
   the config chooses the length of a personal day.  The default is 86400;

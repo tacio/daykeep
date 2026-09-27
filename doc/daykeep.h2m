@@ -83,6 +83,17 @@ when
 .B XDG_CONFIG_HOME
 is set.
 .PP
+To begin each default 86400-second day at 03:00 in UTC-3, write:
+.PP
+.EX
+epoch = 2000-01-01 03:00 -0300
+day_length = 86400
+.EE
+The offset makes that epoch 06:00 UTC.  It is a fixed instant, so each
+boundary remains 03:00 in UTC-3 even when the local machine time zone or
+daylight-saving rules differ.  An epoch without an offset is interpreted as
+UTC; 2000-01-01 03:00 would therefore begin at 00:00 in UTC-3.
+.PP
 Logs must be read or resumed with the epoch and day length used to write
 them; neither setting is stored in the log.  Decimal input rounds to whole
 seconds, and output to four decimal places.  Civil dates and HH:MM retain

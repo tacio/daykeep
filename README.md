@@ -49,6 +49,27 @@ boundaries are exactly 90,000 seconds apart. Civil dates, `HH:MM`, and
 hour/minute output keep their usual meanings. Logs store decimal stamps, so
 read or resume them with the epoch and day length used to write them.
 
+For a normal 24-hour day whose boundary is 03:00 in UTC−3, use this config
+instead (or omit `day_length`, since 86,400 seconds is the default):
+
+```ini
+# ~/.config/daykeep/config
+epoch = 2000-01-01 03:00 -0300
+day_length = 86400
+```
+
+`-0300` means three hours west of UTC, so that epoch is 2000-01-01 06:00 UTC.
+Every subsequent boundary is exactly 86,400 seconds later: 03:00 in that
+fixed UTC−3 offset. The offset belongs to the epoch, not to the machine's
+current time zone; use it even if `TZ` is different. An epoch without an
+explicit offset is read as UTC, so `03:00` by itself would put the boundary at
+00:00 UTC−3 instead. Daylight-saving changes do not move an epoch boundary;
+use a fixed offset when you want a fixed UTC−3 boundary.
+
+The first nonempty value wins independently for each setting: command line,
+then environment, then config, then the default. A later `epoch` line in the
+config replaces an earlier one.
+
 ### Tracker
 
 `daykeep --track` (`-t`) is an interactive tracker:
