@@ -30,6 +30,23 @@ It sums ranges, tracks time interactively, and converts between decimal
 stamps and civil clocks. See `daykeep --help`, `man daykeep`, or `info
 daykeep` for the full manual.
 
+### Read elapsed time as hours and minutes
+
+Use a range from zero to render a decimal-day duration in hours and minutes:
+
+```console
+$ daykeep -s --hm '0 - .5320'
+12h 46m
+```
+
+To total a log of `START - END` entries in the same format, pass it with
+`--file` (or pipe it on standard input):
+
+```console
+$ daykeep -s --hm -f work.log
+3h 43m
+```
+
 ### Configure your day
 
 Set `--epoch=DATE`, `DAYKEEP_EPOCH`, or `epoch = DATE` in

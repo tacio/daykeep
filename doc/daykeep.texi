@@ -590,6 +590,21 @@ Decimal output is plain numbers, so the usual tools can work with it.
 
 @itemize
 @item
+Render a decimal-day duration in hours and minutes by summing a range from
+zero:
+@example
+$ daykeep -s --hm '0 - .5320'
+12h 46m
+@end example
+
+@item
+Total a log of @samp{START - END} entries in hours and minutes:
+@example
+$ daykeep -s --hm -f work.log
+3h 43m
+@end example
+
+@item
 Sum several logs in minutes with @command{awk}:
 @example
 $ for f in *.log; do daykeep -s --format=minutes -f "$f"; done |

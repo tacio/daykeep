@@ -10,6 +10,10 @@ daykeep \- sum and track time in decimal days
 2h 15m
 .RB "$ " "daykeep \-s \-\-format=minutes \-f today.log"
 135
+.RB "$ " "daykeep \-s \-\-hm '0 \- .5320'"
+12h 46m
+.RB "$ " "daykeep \-s \-\-hm \-f work.log"
+3h 43m
 .RB "$ " "daykeep \-\-now"
 09761.4564
 .RB "$ " "daykeep \-\-convert .5 +9 10:00"
